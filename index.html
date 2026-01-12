@@ -1,67 +1,54 @@
 <!DOCTYPE html>
-<html lang="zh-TW">
+<html>
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Luckfox 最終方案</title>
+    <title>Luckfox Final Test</title>
     <style>
-        body { font-family: sans-serif; background: #121212; color: white; text-align: center; padding: 20px; }
-        .video-box { width: 100%; max-width: 640px; aspect-ratio: 16/9; background: #000; margin: auto; border-radius: 12px; overflow: hidden; border: 1px solid #333; }
-        video { width: 100%; height: 100%; object-fit: contain; }
-        button { width: 100%; max-width: 300px; padding: 20px; margin-top: 20px; border-radius: 50px; border: none; background: #2ecc71; color: white; font-size: 18px; font-weight: bold; cursor: pointer; }
-        #logs { font-size: 12px; color: #2ed573; margin-top: 20px; text-align: left; background: #000; padding: 15px; height: 120px; overflow-y: auto; border: 1px solid #444; font-family: monospace; }
+        body { background: #000; color: #0f0; text-align: center; font-family: monospace; }
+        video { width: 80%; border: 1px solid #333; }
+        button { padding: 20px; background: #222; color: #0f0; border: 1px solid #0f0; cursor: pointer; }
     </style>
 </head>
 <body>
-    <h2>Luckfox 監控對講機</h2>
-    <div class="video-box"><video id="video" autoplay playsinline muted></video></div>
-    <button id="btnStart">點擊啟動監控與對講</button>
-    <div id="logs">>> 系統準備就緒</div>
+    <video id="v" autoplay playsinline muted></video><br>
+    <button id="go">點擊啟動監控與對講</button>
+    <div id="l">>> 準備就緒</div>
 
 <script>
-    const SERVER_URL = "https://be9c2484fae9.ngrok-free.app"; 
-    const videoEl = document.getElementById('video');
-    const btnStart = document.getElementById('btnStart');
-    const logEl = document.getElementById('logs');
+    const SVR = "https://be9c2484fae9.ngrok-free.app";
+    const log = (m) => document.getElementById('l').innerText += "\n" + m;
 
-    function addLog(msg) { logEl.innerHTML += `<br>> ${msg}`; logEl.scrollTop = logEl.scrollHeight; }
-
-    async function start() {
-        btnStart.disabled = true;
-        addLog("正在連接影像...");
-
-        // 1. 影像連線
+    document.getElementById('go').onclick = async () => {
         try {
-            const pcV = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
-            pcV.addTransceiver('video', { direction: 'recvonly' });
-            pcV.ontrack = (e) => { videoEl.srcObject = e.streams[0]; addLog("影像已連通"); };
-            const offerV = await pcV.createOffer();
-            await pcV.setLocalDescription(offerV);
-            const resV = await fetch(`${SERVER_URL}/api/webrtc?src=pet2`, { method: 'POST', body: offerV.sdp });
-            const answerV = await resV.text();
-            await pcV.setRemoteDescription({ type: 'answer', sdp: answerV });
-        } catch (e) { addLog("影像錯誤: " + e.message); }
+            const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+            
+            // 強制抓麥克風
+            const ms = await navigator.mediaDevices.getUserMedia({ audio: true });
+            ms.getTracks().forEach(t => pc.addTrack(t, ms));
+            log("麥克風已啟動");
 
-        // 2. 音訊連線
-        try {
-            addLog("正在連接音訊並開啟麥克風...");
-            const pcA = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
-            const stream = await navigator.mediaDevices.getUserMedia({ 
-                audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true } 
+            // 設定影像接收與聲音雙向
+            pc.addTransceiver('video', { direction: 'recvonly' });
+            pc.ontrack = (e) => { if(e.track.kind === 'video') document.getElementById('v').srcObject = e.streams[0]; };
+
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            
+            // 等待 ICE 1.5 秒確保路徑完整
+            await new Promise(r => setTimeout(r, 1500));
+
+            log("傳送連線中...");
+            const res = await fetch(`${SVR}/api/webrtc?src=pet2`, {
+                method: 'POST',
+                body: pc.localDescription.sdp
             });
-            stream.getTracks().forEach(track => pcA.addTrack(track, stream));
 
-            const offerA = await pcA.createOffer();
-            await pcA.setLocalDescription(offerA);
-            await new Promise(r => setTimeout(r, 1000)); // 等待 ICE
+            const answer = await res.text();
+            await pc.setRemoteDescription({ type: 'answer', sdp: answer });
+            log("連線成功！請對著麥克風大聲吹氣測試");
 
-            const resA = await fetch(`${SERVER_URL}/api/webrtc?src=pet2_mic`, { method: 'POST', body: pcA.localDescription.sdp });
-            const answerA = await resA.text();
-            await pcA.setRemoteDescription({ type: 'answer', sdp: answerA });
-            addLog("對講連線成功！請說話測試");
-        } catch (e) { addLog("音訊錯誤: " + e.message); }
-    }
-    btnStart.addEventListener('click', start);
+        } catch (e) { log("錯誤: " + e.message); }
+    };
 </script>
 </body>
 </html>
