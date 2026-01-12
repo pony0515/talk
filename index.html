@@ -2,40 +2,53 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>Luckfox 影音整合終端</title>
+    <title>Luckfox 影音同步版</title>
     <style>
         body { background: #000; color: #0f0; text-align: center; font-family: monospace; }
-        video { width: 100%; max-width: 500px; border: 1px solid #333; margin-top: 20px; }
-        button { padding: 20px; background: #0f0; color: #000; font-weight: bold; cursor: pointer; border-radius: 10px; }
+        video { width: 100%; max-width: 500px; border: 1px solid #333; margin: 20px 0; background: #111; }
+        button { padding: 20px 40px; background: #27ae60; color: #fff; border: none; border-radius: 5px; cursor: pointer; }
+        #st { margin-top: 15px; color: #888; }
     </style>
 </head>
 <body>
-    <h2>LUCKFOX AIO TERMINAL</h2>
+    <h2>LUCKFOX LIVE</h2>
     <video id="v" autoplay playsinline muted></video><br>
-    <button id="go">啟動影音監控</button>
+    <button id="go">啟動影音連線</button>
     <div id="st">READY</div>
 
 <script>
     const SVR = "https://87c22b69e24f.ngrok-free.app"; 
+    const st = document.getElementById('st');
 
     document.getElementById('go').onclick = async () => {
-        const st = document.getElementById('st');
-        st.innerText = "連線中...";
+        st.innerText = "正在同步影像...";
 
-        // 1. 影像 (透過 Python 轉發給 go2rtc)
+        // 1. 影像連線
         try {
-            const pc = new RTCPeerConnection();
+            const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
             pc.addTransceiver('video', { direction: 'recvonly' });
-            pc.ontrack = (e) => document.getElementById('v').srcObject = e.streams[0];
+            pc.ontrack = (e) => { 
+                document.getElementById('v').srcObject = e.streams[0];
+                st.innerText = "影像已就緒，啟動對講...";
+                startAudio(); // 影像成功後再開聲音
+            };
+
             const off = await pc.createOffer();
             await pc.setLocalDescription(off);
             
-            const resV = await fetch(`${SVR}/api/webrtc?src=pet2`, { method: 'POST', body: off.sdp });
-            await pc.setRemoteDescription({ type: 'answer', sdp: await resV.text() });
-            st.innerText = "影像 OK";
-        } catch (e) { console.log("影像失敗"); }
+            const resV = await fetch(`${SVR}/api/webrtc?src=pet2`, { 
+                method: 'POST', 
+                body: off.sdp,
+                headers: { 'Content-Type': 'text/plain' }
+            });
+            const sdpA = await resV.text();
+            await pc.setRemoteDescription({ type: 'answer', sdp: sdpA });
+        } catch (e) { 
+            st.innerText = "影像連線失敗: " + e.message;
+        }
+    };
 
-        // 2. 聲音 (直接給 Python 播)
+    async function startAudio() {
         try {
             const audioCtx = new AudioContext({ sampleRate: 16000 });
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -53,9 +66,10 @@
                 }
                 fetch(SVR, { method: 'POST', body: pcm.buffer, mode: 'cors' });
             };
-            st.innerText = "影音全開中";
-        } catch (e) { st.innerText = "音訊錯誤"; }
-    };
+        } catch (e) {
+            st.innerText = "聲音啟動失敗";
+        }
+    }
 </script>
 </body>
 </html>
