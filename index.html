@@ -1,73 +1,78 @@
 <!DOCTYPE html>
-<html>
+<html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <title>Luckfox 影音同步版</title>
+    <title>Luckfox MSE 影音整合版</title>
     <style>
-        body { background: #000; color: #0f0; text-align: center; font-family: monospace; }
-        video { width: 100%; max-width: 500px; border: 1px solid #333; margin: 20px 0; background: #111; }
-        button { padding: 20px 40px; background: #27ae60; color: #fff; border: none; border-radius: 5px; cursor: pointer; }
-        #st { margin-top: 15px; color: #888; }
+        body { background: #000; color: #0f0; text-align: center; font-family: monospace; padding: 20px; }
+        .video-container { width: 100%; max-width: 600px; margin: auto; border: 2px solid #333; }
+        video { width: 100%; display: block; background: #111; }
+        .controls { margin-top: 20px; }
+        button { padding: 15px 30px; font-size: 18px; cursor: pointer; background: #27ae60; color: white; border: none; border-radius: 5px; }
+        #status { margin-top: 15px; color: #888; }
     </style>
 </head>
 <body>
-    <h2>LUCKFOX LIVE</h2>
-    <video id="v" autoplay playsinline muted></video><br>
-    <button id="go">啟動影音連線</button>
-    <div id="st">READY</div>
+    <h2>LUCKFOX REMOTE MONITOR</h2>
+    <div class="video-container">
+        <video id="videoPlayer" autoplay playsinline muted></video>
+    </div>
+    <div class="controls">
+        <button id="btnStart">啟動影音監控</button>
+    </div>
+    <div id="status">等待中...</div>
 
-<script>
+    <script src="https://unpkg.com/hls.js/dist/hls.min.js"></script> <script>
     const SVR = "https://87c22b69e24f.ngrok-free.app"; 
-    const st = document.getElementById('st');
+    const video = document.getElementById('videoPlayer');
+    const status = document.getElementById('status');
 
-    document.getElementById('go').onclick = async () => {
-        st.innerText = "正在同步影像...";
+    document.getElementById('btnStart').onclick = async () => {
+        status.innerText = "正在連接影像串流...";
 
-        // 1. 影像連線
-        try {
-            const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
-            pc.addTransceiver('video', { direction: 'recvonly' });
-            pc.ontrack = (e) => { 
-                document.getElementById('v').srcObject = e.streams[0];
-                st.innerText = "影像已就緒，啟動對講...";
-                startAudio(); // 影像成功後再開聲音
-            };
+        // 1. 影像：使用 MSE 模式 (透過 Python 轉發)
+        // go2rtc 的 MSE 路徑通常是 /api/mse.mp4?src=流名稱
+        video.src = `${SVR}/api/mse.mp4?src=pet2`;
+        
+        video.onplaying = () => {
+            status.innerText = "影像已連接，正在啟動對講...";
+            startAudioPush();
+        };
 
-            const off = await pc.createOffer();
-            await pc.setLocalDescription(off);
-            
-            const resV = await fetch(`${SVR}/api/webrtc?src=pet2`, { 
-                method: 'POST', 
-                body: off.sdp,
-                headers: { 'Content-Type': 'text/plain' }
-            });
-            const sdpA = await resV.text();
-            await pc.setRemoteDescription({ type: 'answer', sdp: sdpA });
-        } catch (e) { 
-            st.innerText = "影像連線失敗: " + e.message;
-        }
+        video.onerror = () => {
+            status.innerText = "影像讀取失敗，請檢查 go2rtc 狀態";
+        };
     };
 
-    async function startAudio() {
+    async function startAudioPush() {
         try {
-            const audioCtx = new AudioContext({ sampleRate: 16000 });
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             const source = audioCtx.createMediaStreamSource(stream);
-            const proc = audioCtx.createScriptProcessor(4096, 1, 1);
-            source.connect(proc);
-            proc.connect(audioCtx.destination);
+            const processor = audioCtx.createScriptProcessor(4096, 1, 1);
 
-            proc.onaudioprocess = (e) => {
+            source.connect(processor);
+            processor.connect(audioCtx.destination);
+
+            processor.onaudioprocess = (e) => {
                 const input = e.inputBuffer.getChannelData(0);
                 const pcm = new Int16Array(input.length);
                 for (let i = 0; i < input.length; i++) {
                     let s = Math.max(-1, Math.min(1, input[i]));
                     pcm[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
                 }
-                fetch(SVR, { method: 'POST', body: pcm.buffer, mode: 'cors' });
+
+                fetch(SVR, {
+                    method: 'POST',
+                    mode: 'cors',
+                    body: pcm.buffer,
+                    headers: { 'Content-Type': 'application/octet-stream' }
+                }).catch(err => console.error("音訊傳送失敗"));
             };
-        } catch (e) {
-            st.innerText = "聲音啟動失敗";
+            status.innerText = "🔴 影音連線中";
+            status.style.color = "#ff4757";
+        } catch (err) {
+            status.innerText = "麥克風啟動失敗: " + err.message;
         }
     }
 </script>
