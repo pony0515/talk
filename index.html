@@ -3,19 +3,19 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Luckfox 最終方案</title>
+    <title>Luckfox 穩定方案</title>
     <style>
         body { font-family: sans-serif; background: #121212; color: white; display: flex; flex-direction: column; align-items: center; padding: 20px; }
         .video-box { width: 100%; max-width: 640px; aspect-ratio: 16/9; background: #000; border-radius: 12px; overflow: hidden; }
         video { width: 100%; height: 100%; }
         button { width: 100%; max-width: 640px; padding: 20px; margin-top: 15px; border-radius: 50px; border: none; background: #3498db; color: white; font-weight: bold; cursor: pointer; }
-        .log-box { width: 100%; max-width: 620px; font-size: 12px; color: #7f8c8d; background: #000; padding: 10px; border-radius: 8px; margin-top: 10px; height: 100px; overflow-y: auto; border: 1px solid #333; }
+        .log-box { width: 100%; max-width: 620px; font-size: 12px; color: #7f8c8d; background: #000; padding: 10px; border-radius: 8px; margin-top: 10px; height: 150px; overflow-y: auto; border: 1px solid #333; }
     </style>
 </head>
 <body>
     <div class="video-box"><video id="video" autoplay playsinline muted></video></div>
     <button id="btnStart">開啟影像與對講</button>
-    <div class="log-box" id="logs">>> 系統準備就緒</div>
+    <div class="log-box" id="logs">>> 準備就緒</div>
 
 <script>
     const SERVER_URL = "https://be9c2484fae9.ngrok-free.app"; 
@@ -31,17 +31,23 @@
         try {
             const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
 
-            // 1. 取得麥克風並設定收發
+            // 1. 取得麥克風權限
             const localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
-            
-            // 2. 影像只收，聲音設定為發送
+            addLog("麥克風已授權");
+
+            // 2. 只使用 addTrack，這會自動建立一個 sendrecv 的 transceiver
+            // 不要再寫 pc.addTransceiver('audio', ...)
+            localStream.getTracks().forEach(track => {
+                pc.addTrack(track, localStream);
+                addLog("音軌已綁定 (單次宣告)");
+            });
+
+            // 3. 影像只收不發
             pc.addTransceiver('video', { direction: 'recvonly' });
-            pc.addTransceiver('audio', { direction: 'sendrecv' });
 
             pc.ontrack = (event) => {
                 if (event.track.kind === 'video') {
-                    addLog("收到影像！");
+                    addLog("收到影像串流！");
                     videoEl.srcObject = event.streams[0];
                 }
             };
@@ -49,19 +55,21 @@
             const offer = await pc.createOffer();
             await pc.setLocalDescription(offer);
             
-            // 等待一秒收集 ICE
+            // 等待一秒收集 ICE 資訊
             await new Promise(r => setTimeout(r, 1000));
 
-            addLog("連線交換中...");
+            addLog("正在交換協定 (SDP)...");
             const response = await fetch(`${SERVER_URL}/api/webrtc?src=${streamName}`, {
                 method: 'POST',
                 body: pc.localDescription.sdp,
                 headers: { 'Content-Type': 'text/plain' }
             });
 
+            if (!response.ok) throw new Error("連線請求被拒絕");
+
             const answer = await response.text();
             await pc.setRemoteDescription({ type: 'answer', sdp: answer });
-            addLog("連線成功！現在請說話測試喇叭。");
+            addLog("連線建立完成！請測試說話。");
 
         } catch (e) {
             addLog("錯誤: " + e.message);
