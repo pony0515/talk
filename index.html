@@ -3,19 +3,19 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Luckfox 最終暴力版</title>
+    <title>Luckfox 穩定對講</title>
     <style>
-        body { font-family: sans-serif; background: #1a1a1a; color: white; text-align: center; padding: 20px; }
+        body { font-family: sans-serif; background: #121212; color: white; text-align: center; padding: 20px; }
         .video-box { width: 100%; max-width: 640px; aspect-ratio: 16/9; background: #000; margin: auto; border-radius: 10px; overflow: hidden; }
         video { width: 100%; height: 100%; }
-        button { width: 80%; max-width: 300px; padding: 20px; margin-top: 20px; border-radius: 50px; border: none; background: #e74c3c; color: white; font-size: 18px; font-weight: bold; cursor: pointer; }
-        .log { font-size: 12px; color: #888; margin-top: 20px; text-align: left; background: #000; padding: 10px; height: 100px; overflow-y: auto; }
+        button { width: 80%; max-width: 300px; padding: 20px; margin-top: 20px; border-radius: 50px; border: none; background: #2ecc71; color: white; font-size: 18px; font-weight: bold; cursor: pointer; }
+        .log { font-size: 12px; color: #888; margin-top: 20px; text-align: left; background: #000; padding: 10px; height: 120px; overflow-y: auto; border: 1px solid #333; }
     </style>
 </head>
 <body>
     <div class="video-box"><video id="video" autoplay playsinline muted></video></div>
-    <button id="btnStart">點擊：同步影像與對講</button>
-    <div class="log" id="logs">>> 系統等待中</div>
+    <button id="btnStart">點擊啟動監控與對講</button>
+    <div class="log" id="logs">>> 系統準備就緒</div>
 
 <script>
     const SERVER_URL = "https://be9c2484fae9.ngrok-free.app"; 
@@ -27,22 +27,22 @@
     function addLog(msg) { logEl.innerHTML += `<br>> ${msg}`; logEl.scrollTop = logEl.scrollHeight; }
 
     async function start() {
-        btnStart.style.display = 'none';
+        btnStart.disabled = true;
         try {
             const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
 
-            // 1. 先開啟麥克風
+            // 1. 獲取麥克風
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            // 2. 使用 addTrack 加入音軌 (這會自動處理音訊宣告，不要再用 addTransceiver)
             stream.getTracks().forEach(track => pc.addTrack(track, stream));
-            addLog("麥克風已就緒");
+            addLog("麥克風已就緒並綁定");
 
-            // 2. 影像只收，音訊收發
+            // 3. 影像則使用 recvonly 宣告 (影像只收不發)
             pc.addTransceiver('video', { direction: 'recvonly' });
-            pc.addTransceiver('audio', { direction: 'sendrecv' });
 
             pc.ontrack = (event) => {
                 if (event.track.kind === 'video') {
-                    addLog("影像流已到達");
+                    addLog("收到影像流！");
                     videoEl.srcObject = event.streams[0];
                 }
             };
@@ -50,7 +50,7 @@
             const offer = await pc.createOffer();
             await pc.setLocalDescription(offer);
             
-            // 等待 ICE 收集 (穩定連線)
+            // 等待一秒讓網路路徑收集完成
             await new Promise(r => setTimeout(r, 1000));
 
             addLog("正在連接板子...");
@@ -59,13 +59,16 @@
                 body: pc.localDescription.sdp
             });
 
+            if (!res.ok) throw new Error("連線失敗: " + res.status);
+
             const answer = await res.text();
+            // 這裡不再會出現 Duplicate msid 錯誤
             await pc.setRemoteDescription({ type: 'answer', sdp: answer });
-            addLog("連線成功！請大聲對話。");
+            addLog("連線成功！可以開始對講了");
 
         } catch (e) {
             addLog("錯誤: " + e.message);
-            btnStart.style.display = 'block';
+            btnStart.disabled = false;
         }
     }
     btnStart.addEventListener('click', start);
