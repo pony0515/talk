@@ -1,104 +1,60 @@
 <!DOCTYPE html>
-<html lang="zh-TW">
+<html>
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Luckfox 聲音對講終端</title>
+    <title>Luckfox 影音整合終端</title>
     <style>
-        body { 
-            background: #121212; color: #00ff00; 
-            font-family: 'Courier New', Courier, monospace; 
-            text-align: center; padding-top: 50px; 
-        }
-        .container {
-            border: 2px solid #333; display: inline-block; padding: 40px; border-radius: 20px; background: #000;
-        }
-        #status { margin: 20px; font-size: 18px; color: #ff9f43; min-height: 24px; }
-        button { 
-            padding: 25px 50px; font-size: 22px; font-weight: bold;
-            background: #27ae60; color: white; border: none; 
-            border-radius: 50px; cursor: pointer; transition: 0.3s;
-            box-shadow: 0 5px 15px rgba(39, 174, 96, 0.4);
-        }
-        button:hover { background: #2ecc71; transform: scale(1.05); }
-        button:disabled { background: #555; cursor: not-allowed; box-shadow: none; }
-        .log-box {
-            margin-top: 30px; font-size: 12px; color: #444; text-align: left;
-            max-width: 400px; margin-left: auto; margin-right: auto;
-        }
+        body { background: #000; color: #0f0; text-align: center; font-family: monospace; }
+        video { width: 100%; max-width: 500px; border: 1px solid #333; margin-top: 20px; }
+        button { padding: 20px; background: #0f0; color: #000; font-weight: bold; cursor: pointer; border-radius: 10px; }
     </style>
 </head>
 <body>
-
-    <div class="container">
-        <h1>LUCKFOX AUDIO PUSH</h1>
-        <div id="status">準備就緒</div>
-        <button id="btnStart">點擊啟動對講</button>
-        <div class="log-box" id="logs">>> 等待指令...</div>
-    </div>
+    <h2>LUCKFOX AIO TERMINAL</h2>
+    <video id="v" autoplay playsinline muted></video><br>
+    <button id="go">啟動影音監控</button>
+    <div id="st">READY</div>
 
 <script>
-    // ==========================================
-    // 請在這裡填入你最新的 ngrok 網址
-    // ==========================================
-    const SVR_URL = "https://87c22b69e24f.ngrok-free.app"; 
+    const SVR = "https://你的ngrok網址.ngrok-free.app"; 
 
-    const btn = document.getElementById('btnStart');
-    const status = document.getElementById('status');
-    const logs = document.getElementById('logs');
+    document.getElementById('go').onclick = async () => {
+        const st = document.getElementById('st');
+        st.innerText = "連線中...";
 
-    function addLog(m) {
-        logs.innerText = ">> " + m;
-        console.log(m);
-    }
-
-    btn.onclick = async () => {
-        btn.disabled = true;
-        status.innerText = "正在連線中...";
-        addLog("請求麥克風權限...");
-
+        // 1. 影像 (透過 Python 轉發給 go2rtc)
         try {
-            // 1. 初始化音訊 (Luckfox 建議用 16000Hz)
-            const audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+            const pc = new RTCPeerConnection();
+            pc.addTransceiver('video', { direction: 'recvonly' });
+            pc.ontrack = (e) => document.getElementById('v').srcObject = e.streams[0];
+            const off = await pc.createOffer();
+            await pc.setLocalDescription(off);
+            
+            const resV = await fetch(`${SVR}/api/webrtc?src=pet2`, { method: 'POST', body: off.sdp });
+            await pc.setRemoteDescription({ type: 'answer', sdp: await resV.text() });
+            st.innerText = "影像 OK";
+        } catch (e) { console.log("影像失敗"); }
+
+        // 2. 聲音 (直接給 Python 播)
+        try {
+            const audioCtx = new AudioContext({ sampleRate: 16000 });
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             const source = audioCtx.createMediaStreamSource(stream);
-            
-            // 2. 建立處理器 (每段 4096 採樣)
-            const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+            const proc = audioCtx.createScriptProcessor(4096, 1, 1);
+            source.connect(proc);
+            proc.connect(audioCtx.destination);
 
-            source.connect(processor);
-            processor.connect(audioCtx.destination);
-
-            addLog("連線成功，開始傳送 PCM 數據");
-            status.innerText = "🔴 正在傳送聲音...";
-            status.style.color = "#ff4757";
-
-            processor.onaudioprocess = (e) => {
+            proc.onaudioprocess = (e) => {
                 const input = e.inputBuffer.getChannelData(0);
                 const pcm = new Int16Array(input.length);
-                
-                // Float32 轉 Int16 (PCM)
                 for (let i = 0; i < input.length; i++) {
                     let s = Math.max(-1, Math.min(1, input[i]));
                     pcm[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
                 }
-
-                // 3. 透過 POST 傳送 PCM 數據塊
-                fetch(SVR_URL, {
-                    method: 'POST',
-                    mode: 'cors',
-                    body: pcm.buffer,
-                    headers: { 'Content-Type': 'application/octet-stream' }
-                }).catch(err => {
-                    addLog("數據傳送中斷: " + err.message);
-                });
+                fetch(SVR, { method: 'POST', body: pcm.buffer, mode: 'cors' });
             };
-
-        } catch (err) {
-            addLog("錯誤: " + err.message);
-            status.innerText = "連線失敗";
-            btn.disabled = false;
-        }
+            st.innerText = "影音全開中";
+        } catch (e) { st.innerText = "音訊錯誤"; }
     };
 </script>
 </body>
