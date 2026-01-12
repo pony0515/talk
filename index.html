@@ -86,11 +86,7 @@
             // 關鍵修正：加入 ngrok 繞過標頭
             const response = await fetch(`${SERVER_URL}/api/webrtc?src=${streamName}`, {
                 method: 'POST',
-                body: offer.sdp,
-                headers: {
-                    'Content-Type': 'text/plain',
-                    'ngrok-skip-browser-warning': 'true' // 繞過 ngrok 的警告中間頁
-                }
+                body: offer.sdp
             });
 
             if (!response.ok) {
