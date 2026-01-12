@@ -3,19 +3,19 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Luckfox 穩定方案</title>
+    <title>Luckfox 最終暴力版</title>
     <style>
-        body { font-family: sans-serif; background: #121212; color: white; display: flex; flex-direction: column; align-items: center; padding: 20px; }
-        .video-box { width: 100%; max-width: 640px; aspect-ratio: 16/9; background: #000; border-radius: 12px; overflow: hidden; }
+        body { font-family: sans-serif; background: #1a1a1a; color: white; text-align: center; padding: 20px; }
+        .video-box { width: 100%; max-width: 640px; aspect-ratio: 16/9; background: #000; margin: auto; border-radius: 10px; overflow: hidden; }
         video { width: 100%; height: 100%; }
-        button { width: 100%; max-width: 640px; padding: 20px; margin-top: 15px; border-radius: 50px; border: none; background: #3498db; color: white; font-weight: bold; cursor: pointer; }
-        .log-box { width: 100%; max-width: 620px; font-size: 12px; color: #7f8c8d; background: #000; padding: 10px; border-radius: 8px; margin-top: 10px; height: 150px; overflow-y: auto; border: 1px solid #333; }
+        button { width: 80%; max-width: 300px; padding: 20px; margin-top: 20px; border-radius: 50px; border: none; background: #e74c3c; color: white; font-size: 18px; font-weight: bold; cursor: pointer; }
+        .log { font-size: 12px; color: #888; margin-top: 20px; text-align: left; background: #000; padding: 10px; height: 100px; overflow-y: auto; }
     </style>
 </head>
 <body>
     <div class="video-box"><video id="video" autoplay playsinline muted></video></div>
-    <button id="btnStart">開啟影像與對講</button>
-    <div class="log-box" id="logs">>> 準備就緒</div>
+    <button id="btnStart">點擊：同步影像與對講</button>
+    <div class="log" id="logs">>> 系統等待中</div>
 
 <script>
     const SERVER_URL = "https://be9c2484fae9.ngrok-free.app"; 
@@ -27,27 +27,22 @@
     function addLog(msg) { logEl.innerHTML += `<br>> ${msg}`; logEl.scrollTop = logEl.scrollHeight; }
 
     async function start() {
-        btnStart.disabled = true;
+        btnStart.style.display = 'none';
         try {
             const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
 
-            // 1. 取得麥克風權限
-            const localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            addLog("麥克風已授權");
+            // 1. 先開啟麥克風
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            stream.getTracks().forEach(track => pc.addTrack(track, stream));
+            addLog("麥克風已就緒");
 
-            // 2. 只使用 addTrack，這會自動建立一個 sendrecv 的 transceiver
-            // 不要再寫 pc.addTransceiver('audio', ...)
-            localStream.getTracks().forEach(track => {
-                pc.addTrack(track, localStream);
-                addLog("音軌已綁定 (單次宣告)");
-            });
-
-            // 3. 影像只收不發
+            // 2. 影像只收，音訊收發
             pc.addTransceiver('video', { direction: 'recvonly' });
+            pc.addTransceiver('audio', { direction: 'sendrecv' });
 
             pc.ontrack = (event) => {
                 if (event.track.kind === 'video') {
-                    addLog("收到影像串流！");
+                    addLog("影像流已到達");
                     videoEl.srcObject = event.streams[0];
                 }
             };
@@ -55,25 +50,22 @@
             const offer = await pc.createOffer();
             await pc.setLocalDescription(offer);
             
-            // 等待一秒收集 ICE 資訊
+            // 等待 ICE 收集 (穩定連線)
             await new Promise(r => setTimeout(r, 1000));
 
-            addLog("正在交換協定 (SDP)...");
-            const response = await fetch(`${SERVER_URL}/api/webrtc?src=${streamName}`, {
+            addLog("正在連接板子...");
+            const res = await fetch(`${SERVER_URL}/api/webrtc?src=${streamName}`, {
                 method: 'POST',
-                body: pc.localDescription.sdp,
-                headers: { 'Content-Type': 'text/plain' }
+                body: pc.localDescription.sdp
             });
 
-            if (!response.ok) throw new Error("連線請求被拒絕");
-
-            const answer = await response.text();
+            const answer = await res.text();
             await pc.setRemoteDescription({ type: 'answer', sdp: answer });
-            addLog("連線建立完成！請測試說話。");
+            addLog("連線成功！請大聲對話。");
 
         } catch (e) {
             addLog("錯誤: " + e.message);
-            btnStart.disabled = false;
+            btnStart.style.display = 'block';
         }
     }
     btnStart.addEventListener('click', start);
