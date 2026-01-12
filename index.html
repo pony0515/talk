@@ -1,34 +1,87 @@
 <!DOCTYPE html>
-<html>
+<html lang="zh-TW">
 <head>
-    <title>Luckfox Talk</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Luckfox 智能監控對講</title>
+    <style>
+        body { font-family: sans-serif; background: #1a1a1a; color: white; display: flex; flex-direction: column; align-items: center; padding: 20px; }
+        .container { width: 100%; max-width: 640px; }
+        video { width: 100%; border-radius: 8px; background: black; box-shadow: 0 4px 10px rgba(0,0,0,0.5); }
+        .controls { margin-top: 20px; display: flex; flex-direction: column; gap: 15px; }
+        button { padding: 15px; font-size: 18px; border-radius: 50px; border: none; cursor: pointer; transition: 0.3s; font-weight: bold; }
+        #btnTalk { background: #e74c3c; color: white; }
+        #btnTalk:active { background: #c0392b; transform: scale(0.95); }
+        #btnTalk:disabled { background: #7f8c8d; }
+        .status-tag { font-size: 14px; color: #aaa; text-align: center; }
+    </style>
 </head>
 <body>
-    <button id="talkBtn" style="width:200px;height:100px;font-size:24px;">點我開始對講</button>
-    <p id="status">狀態: 待命</p>
 
-    <script>
-        const pc = new RTCPeerConnection();
-        const serverUrl = "https://be9c2484fae9.ngrok-free.app"; // 換成你的 ngrok 網址
+<div class="container">
+    <h2 style="text-align: center;">Luckfox 監控終端</h2>
+    
+    <video id="video" autoplay playsinline controls muted></video>
 
-        document.getElementById('talkBtn').onclick = async () => {
-            document.getElementById('status').innerText = "狀態: 請求麥克風...";
-            const stream = await navigator.mediaDevices.getUserMedia({audio: true});
-            stream.getTracks().forEach(track => pc.addTrack(track, stream));
+    <div class="controls">
+        <button id="btnTalk">按住開始對講</button>
+        <div class="status-tag" id="status">狀態: 點擊按鈕開啟連線</div>
+    </div>
+</div>
 
-            const offer = await pc.createOffer();
-            await pc.setLocalDescription(offer);
+<script>
+    const SERVER_URL = "https://be9c2484fae9.ngrok-free.app"; // 你的 ngrok 地址
+    const streamName = "pet2";
+    
+    const videoEl = document.getElementById('video');
+    const btnTalk = document.getElementById('btnTalk');
+    const statusEl = document.getElementById('status');
 
-            const res = await fetch(`${serverUrl}/api/webrtc?src=pet2`, {
+    let pc = new RTCPeerConnection({
+        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+    });
+
+    // 1. 處理影像顯示
+    pc.ontrack = (event) => {
+        videoEl.srcObject = event.streams[0];
+    };
+
+    async function startStream() {
+        statusEl.innerText = "狀態: 正在連接影像...";
+        
+        // 要求影像與麥克風權限
+        const localStream = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
+        
+        // 將麥克風軌道加入 WebRTC
+        localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+
+        // 建立 WebRTC Offer
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+
+        // 發送給 go2rtc API
+        try {
+            const response = await fetch(`${SERVER_URL}/api/webrtc?src=${streamName}`, {
                 method: 'POST',
                 body: offer.sdp
             });
+            const answer = await response.text();
+            await pc.setRemoteDescription({ type: 'answer', sdp: answer });
+            statusEl.innerText = "狀態: 監控中 (麥克風已就緒)";
+        } catch (e) {
+            statusEl.innerText = "狀態: 連線失敗 " + e.message;
+        }
+    }
 
-            const answer = await res.text();
-            await pc.setRemoteDescription({type: 'answer', sdp: answer});
-            document.getElementById('status').innerText = "狀態: 對講中...";
-        };
-    </script>
+    // 啟動流程
+    btnTalk.addEventListener('click', () => {
+        if (pc.signalingState === "stable") {
+            startStream();
+        } else {
+            alert("正在對講中...");
+        }
+    });
+
+</script>
 </body>
 </html>
