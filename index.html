@@ -3,23 +3,19 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Luckfox 最終調試版</title>
+    <title>Luckfox 最終方案</title>
     <style>
         body { font-family: sans-serif; background: #121212; color: white; display: flex; flex-direction: column; align-items: center; padding: 20px; }
-        .container { width: 100%; max-width: 640px; }
-        .video-box { width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 12px; overflow: hidden; }
+        .video-box { width: 100%; max-width: 640px; aspect-ratio: 16/9; background: #000; border-radius: 12px; overflow: hidden; }
         video { width: 100%; height: 100%; }
-        button { width: 100%; padding: 20px; margin-top: 15px; border-radius: 50px; border: none; background: #ff4757; color: white; font-weight: bold; cursor: pointer; }
-        .log-box { font-size: 12px; color: #2ed573; background: #000; padding: 10px; border-radius: 8px; margin-top: 10px; max-height: 200px; overflow-y: auto; border: 1px solid #333; }
+        button { width: 100%; max-width: 640px; padding: 20px; margin-top: 15px; border-radius: 50px; border: none; background: #3498db; color: white; font-weight: bold; cursor: pointer; }
+        .log-box { width: 100%; max-width: 620px; font-size: 12px; color: #7f8c8d; background: #000; padding: 10px; border-radius: 8px; margin-top: 10px; height: 100px; overflow-y: auto; border: 1px solid #333; }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h3>Luckfox 監控對講</h3>
-        <div class="video-box"><video id="video" autoplay playsinline muted></video></div>
-        <button id="btnStart">啟動連線</button>
-        <div class="log-box" id="logs">>> 等待操作...</div>
-    </div>
+    <div class="video-box"><video id="video" autoplay playsinline muted></video></div>
+    <button id="btnStart">開啟影像與對講</button>
+    <div class="log-box" id="logs">>> 系統準備就緒</div>
 
 <script>
     const SERVER_URL = "https://be9c2484fae9.ngrok-free.app"; 
@@ -35,43 +31,28 @@
         try {
             const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
 
-            // 1. 取得麥克風
+            // 1. 取得麥克風並設定收發
             const localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            addLog("麥克風已授權");
-
-            // 2. 強制添加音軌並設定為「只發送」或「收發」
-            localStream.getTracks().forEach(track => {
-                pc.addTrack(track, localStream);
-                addLog("音軌已綁定");
-            });
-
-            // 3. 影像接收設定
-            pc.addTransceiver('video', { direction: 'recvonly' });
+            localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
             
+            // 2. 影像只收，聲音設定為發送
+            pc.addTransceiver('video', { direction: 'recvonly' });
+            pc.addTransceiver('audio', { direction: 'sendrecv' });
+
             pc.ontrack = (event) => {
                 if (event.track.kind === 'video') {
-                    addLog("收到影像串流");
+                    addLog("收到影像！");
                     videoEl.srcObject = event.streams[0];
                 }
             };
 
-            // 4. 建立 Offer 並等待 ICE 收集完成 (確保連線穩定)
             const offer = await pc.createOffer();
             await pc.setLocalDescription(offer);
             
-            addLog("正在準備傳輸協定...");
-            
-            // 等待 ICE 收集完成後再發送，避免 go2rtc 漏掉資訊
-            await new Promise(resolve => {
-                if (pc.iceGatheringState === 'complete') resolve();
-                else {
-                    pc.onicegatheringstatechange = () => {
-                        if (pc.iceGatheringState === 'complete') resolve();
-                    };
-                }
-            });
+            // 等待一秒收集 ICE
+            await new Promise(r => setTimeout(r, 1000));
 
-            addLog("發送加密協定到 Luckfox...");
+            addLog("連線交換中...");
             const response = await fetch(`${SERVER_URL}/api/webrtc?src=${streamName}`, {
                 method: 'POST',
                 body: pc.localDescription.sdp,
@@ -80,7 +61,7 @@
 
             const answer = await response.text();
             await pc.setRemoteDescription({ type: 'answer', sdp: answer });
-            addLog("連線成功！請說話測試");
+            addLog("連線成功！現在請說話測試喇叭。");
 
         } catch (e) {
             addLog("錯誤: " + e.message);
