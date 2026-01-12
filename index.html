@@ -2,67 +2,84 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <title>Luckfox 終極對講</title>
+    <title>Luckfox 對講終端</title>
     <style>
         body { background: #121212; color: #00ff00; font-family: monospace; text-align: center; padding: 20px; }
         .video-box { width: 100%; max-width: 600px; aspect-ratio: 16/9; background: #111; margin: auto; border: 1px solid #333; }
         video { width: 100%; height: 100%; }
         button { width: 250px; padding: 15px; margin-top: 20px; background: #00ff00; color: #000; font-weight: bold; border: none; cursor: pointer; border-radius: 5px; }
-        #logs { margin-top: 20px; font-size: 11px; color: #666; text-align: left; max-width: 600px; margin: 20px auto; border-top: 1px solid #222; padding-top: 10px; }
+        #logs { margin-top: 20px; font-size: 11px; color: #666; text-align: left; max-width: 600px; margin: 20px auto; border-top: 1px solid #222; padding-top: 10px; height: 150px; overflow-y: auto; }
     </style>
 </head>
 <body>
-    <h3>LUCKFOX AUDIO/VIDEO TERMINAL</h3>
+    <h3>LUCKFOX LIVE TERMINAL</h3>
     <div class="video-box"><video id="video" autoplay playsinline muted></video></div>
     <button id="btnStart">CONNECT SYSTEM</button>
     <div id="logs">>> READY</div>
 
 <script>
+    // 請確認此網址與你 ngrok 顯示的一致
     const SERVER = "https://be9c2484fae9.ngrok-free.app"; 
-    const log = (m) => { const l = document.getElementById('logs'); l.innerHTML += `<br>> ${m}`; l.scrollTop = l.scrollHeight; };
+    
+    const log = (m) => { 
+        const l = document.getElementById('logs'); 
+        l.innerHTML += `<br>[${new Date().toLocaleTimeString()}] > ${m}`; 
+        l.scrollTop = l.scrollHeight; 
+    };
 
     document.getElementById('btnStart').onclick = async () => {
         document.getElementById('btnStart').disabled = true;
+        log("STARTING CONNECTION...");
 
-        // --- 1. 影像連線 (pet2) ---
+        // --- 1. 影像連線 ---
         try {
             const pcV = new RTCPeerConnection();
             pcV.addTransceiver('video', { direction: 'recvonly' });
             pcV.ontrack = (e) => { document.getElementById('video').srcObject = e.streams[0]; };
+            
             const offerV = await pcV.createOffer();
             await pcV.setLocalDescription(offerV);
+            
             const resV = await fetch(`${SERVER}/api/webrtc?src=pet2`, { method: 'POST', body: offerV.sdp });
-            await pcV.setRemoteDescription({ type: 'answer', sdp: await resV.text() });
-            log("VIDEO: OK");
+            const sdpV = await resV.text();
+            await pcV.setRemoteDescription({ type: 'answer', sdp: sdpV });
+            log("VIDEO: CONNECTED");
         } catch (e) { log("VIDEO ERR: " + e.message); }
 
-        // --- 2. 音訊連線 (mic_input) ---
+        // --- 2. 音訊連線 ---
         try {
             const pcA = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
             
-            // 取得麥克風並設定為 16kHz
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: { sampleRate: 16000 } });
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                audio: { sampleRate: 16000, channelCount: 1 } 
+            });
             stream.getTracks().forEach(t => pcA.addTrack(t, stream));
-
-            // 設定為只發送模式 (重要：避免 Duplicate msid)
-            pcA.getTransceivers().forEach(t => { if(t.receiver.track.kind === 'audio') t.direction = 'sendonly'; });
 
             const offerA = await pcA.createOffer();
             await pcA.setLocalDescription(offerA);
             
-            // 等待 ICE 穩定
+            // 等待 ICE 收集
             await new Promise(r => setTimeout(r, 1200));
 
-            log("AUDIO PUSHING...");
-            const resA = await fetch(`${SERVER}/SERVER/api/webrtc?src=mic_input`, { 
+            log("SENDING AUDIO OFFER...");
+            // 修正點：移除多餘的 /SERVER/ 路徑
+            const resA = await fetch(`${SERVER}/api/webrtc?src=mic_input`, { 
                 method: 'POST', 
                 body: pcA.localDescription.sdp 
             });
-            const answerA = await resA.text();
-            await pcA.setRemoteDescription({ type: 'answer', sdp: answerA });
-            log("AUDIO: ACTIVE - PLEASE SPEAK");
 
-        } catch (e) { log("AUDIO ERR: " + e.message); }
+            if (!resA.ok) throw new Error(`HTTP ${resA.status}`);
+
+            const sdpA = await resA.text();
+            if (sdpA.indexOf('v=0') === -1) throw new Error("INVALID SDP FROM SERVER");
+
+            await pcA.setRemoteDescription({ type: 'answer', sdp: sdpA });
+            log("AUDIO: ACTIVE - SPEAK NOW");
+
+        } catch (e) { 
+            log("AUDIO ERR: " + e.message); 
+            document.getElementById('btnStart').disabled = false;
+        }
     };
 </script>
 </body>
