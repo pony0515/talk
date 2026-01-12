@@ -3,114 +3,106 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Luckfox 智能監控終端</title>
+    <title>Luckfox 監控對講終端</title>
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #121212; color: white; display: flex; flex-direction: column; align-items: center; padding: 20px; margin: 0; }
-        .container { width: 100%; max-width: 640px; display: flex; flex-direction: column; gap: 20px; }
-        .video-box { position: relative; width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 12px; overflow: hidden; box-shadow: 0 8px 24px rgba(0,0,0,0.5); }
+        body { font-family: sans-serif; background: #121212; color: white; display: flex; flex-direction: column; align-items: center; padding: 20px; }
+        .container { width: 100%; max-width: 640px; }
+        .video-box { width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
         video { width: 100%; height: 100%; object-fit: contain; }
-        .controls { display: flex; flex-direction: column; gap: 15px; }
-        button { padding: 18px; font-size: 20px; border-radius: 50px; border: none; cursor: pointer; transition: all 0.2s; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; }
-        #btnTalk { background: #ff4757; color: white; box-shadow: 0 4px 15px rgba(255, 71, 87, 0.3); }
-        #btnTalk:active { background: #ff6b81; transform: scale(0.95); }
-        #btnTalk:disabled { background: #2f3542; color: #a4b0be; cursor: not-allowed; }
-        .status-tag { font-size: 14px; color: #747d8c; text-align: center; background: #2f3542; padding: 8px; border-radius: 8px; }
-        .log-box { font-size: 12px; color: #2ed573; font-family: monospace; background: #000; padding: 10px; border-radius: 8px; max-height: 120px; overflow-y: auto; border: 1px solid #333; }
+        .controls { margin-top: 20px; display: flex; flex-direction: column; gap: 15px; }
+        button { padding: 18px; font-size: 18px; border-radius: 50px; border: none; cursor: pointer; background: #ff4757; color: white; font-weight: bold; }
+        button:disabled { background: #2f3542; }
+        .status-tag { font-size: 14px; color: #747d8c; text-align: center; }
+        .log-box { font-size: 12px; color: #2ed573; font-family: monospace; background: #000; padding: 10px; border-radius: 8px; margin-top: 10px; max-height: 150px; overflow-y: auto; border: 1px solid #333; }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <h2 style="text-align: center; margin: 10px 0;">Luckfox Cam Pro</h2>
-    
+    <h2 style="text-align: center;">Luckfox Cam Pro</h2>
     <div class="video-box">
         <video id="video" autoplay playsinline muted></video>
     </div>
 
     <div class="controls">
-        <button id="btnTalk">啟動監控與對講</button>
-        <div class="status-tag" id="status">等待連線...</div>
+        <button id="btnStart">啟動監控與對講</button>
+        <div class="status-tag" id="status">等待啟動...</div>
         <div class="log-box" id="logs">系統日誌: 準備就緒</div>
     </div>
 </div>
 
 <script>
-    // 1. 請確保這裡的網址與你目前的 ngrok 網址完全一致
     const SERVER_URL = "https://be9c2484fae9.ngrok-free.app"; 
     const streamName = "pet2";
     
     const videoEl = document.getElementById('video');
-    const btnTalk = document.getElementById('btnTalk');
+    const btnStart = document.getElementById('btnStart');
     const statusEl = document.getElementById('status');
     const logEl = document.getElementById('logs');
 
     function addLog(msg) {
-        const now = new Date().toLocaleTimeString();
-        logEl.innerHTML += `<br>[${now}] ${msg}`;
+        logEl.innerHTML += `<br>> ${msg}`;
         logEl.scrollTop = logEl.scrollHeight;
     }
 
-    async function startStream() {
-        btnTalk.disabled = true;
-        statusEl.innerText = "狀態: 正在建立 WebRTC 連線...";
-        addLog("請求麥克風權限...");
+    async function start() {
+        btnStart.disabled = true;
+        addLog("正在獲取麥克風權限...");
 
         try {
+            // 1. 建立連線實體
             const pc = new RTCPeerConnection({
                 iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
             });
 
-            // 強制要求：接收影像(recvonly) + 雙向音訊(sendrecv)
+            // 2. 獲取麥克風 (必須在建立 Offer 之前)
+            const localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+            localStream.getTracks().forEach(track => {
+                pc.addTrack(track, localStream);
+                addLog("音軌已加入 WebRTC");
+            });
+
+            // 3. 強制指定收發方向
+            // 影像：只接收 (recvonly)
             pc.addTransceiver('video', { direction: 'recvonly' });
+            // 音訊：發送並接收 (sendrecv) -> 這樣才會觸發 backchannel
             pc.addTransceiver('audio', { direction: 'sendrecv' });
 
-            // 獲取麥克風
-            const localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-            localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
-            addLog("麥克風已開啟成功");
-
-            // 監聽遠端影像
+            // 4. 處理遠端影像顯示
             pc.ontrack = (event) => {
-                addLog("收到遠端影像串流軌道");
-                if (videoEl.srcObject !== event.streams[0]) {
+                if (event.track.kind === 'video') {
+                    addLog("收到遠端影像串流");
                     videoEl.srcObject = event.streams[0];
                 }
             };
 
-            // 建立 Offer
+            // 5. 建立 Offer
             const offer = await pc.createOffer();
             await pc.setLocalDescription(offer);
 
-            addLog("發送 SDP Offer 到 Luckfox...");
-
-            // 關鍵修正：加入 ngrok 繞過標頭
+            addLog("發送 SDP Offer...");
             const response = await fetch(`${SERVER_URL}/api/webrtc?src=${streamName}`, {
                 method: 'POST',
-                body: offer.sdp
+                body: offer.sdp,
+                headers: { 'Content-Type': 'text/plain' }
             });
 
-            if (!response.ok) {
-                throw new Error(`伺服器回應錯誤: ${response.status}`);
-            }
+            if (!response.ok) throw new Error("伺服器連線失敗");
 
             const answer = await response.text();
-            addLog("收到 SDP Answer，完成握手");
-            
             await pc.setRemoteDescription({ type: 'answer', sdp: answer });
-
+            
             statusEl.innerText = "狀態: 監控對講中";
-            addLog("連線建立完成！");
+            addLog("連線成功！請開始說話");
 
         } catch (e) {
-            statusEl.innerText = "狀態: 連線失敗";
-            addLog("錯誤原因: " + e.message);
-            console.error(e);
-            btnTalk.disabled = false;
+            addLog("錯誤: " + e.message);
+            statusEl.innerText = "連線失敗";
+            btnStart.disabled = false;
         }
     }
 
-    btnTalk.addEventListener('click', startStream);
+    btnStart.addEventListener('click', start);
 </script>
-
 </body>
 </html>
