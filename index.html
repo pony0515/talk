@@ -48,7 +48,7 @@
 
             try {
                 // 強制設定為 44100
-                audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 44100 });
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
                 micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 const source = audioCtx.createMediaStreamSource(micStream);
                 
