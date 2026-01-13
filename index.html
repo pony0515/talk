@@ -3,57 +3,81 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Luckfox 4G 遠端監控 (MSE 穩定版)</title>
+    <title>Luckfox 4G 穩定版</title>
     <style>
-        body { font-family: -apple-system, sans-serif; background: #121212; color: #fff; text-align: center; margin: 0; padding: 20px; }
-        .card { max-width: 500px; margin: auto; background: #1e1e1e; border-radius: 16px; padding: 20px; box-shadow: 0 8px 32px rgba(0,0,0,0.5); }
-        /* 影片容器樣式 */
-        video-stream { width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 12px; display: block; overflow: hidden; }
-        input { width: 90%; padding: 12px; margin: 15px 0; border-radius: 8px; border: 1px solid #444; background: #333; color: #fff; font-size: 14px; }
-        .btn { width: 100%; padding: 16px; font-size: 18px; font-weight: bold; border-radius: 12px; border: none; cursor: pointer; transition: 0.3s; }
-        .btn-start { background: #007bff; color: white; }
-        .btn-start:hover { background: #0056b3; }
+        body { font-family: sans-serif; background: #121212; color: #fff; text-align: center; padding: 20px; }
+        .card { max-width: 500px; margin: auto; background: #1e1e1e; border-radius: 15px; padding: 20px; }
+        video { width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 10px; margin-bottom: 15px; }
+        input { width: 90%; padding: 12px; margin-bottom: 15px; border-radius: 8px; border: 1px solid #444; background: #333; color: #fff; }
+        .btn { width: 100%; padding: 15px; font-size: 18px; border-radius: 10px; border: none; cursor: pointer; background: #007bff; color: white; font-weight: bold; }
         #status { font-size: 14px; color: #ffca28; margin-top: 15px; }
     </style>
 </head>
 <body>
     <div class="card">
-        <h2>🎥 Luckfox 遠端監控</h2>
-        <p style="font-size: 12px; color: #aaa;">模式：MSE (WebSocket over TCP)</p>
-        
-        <input type="text" id="ngrokUrl" placeholder="請貼上 ngrok 網址 (https://xxx.ngrok-free.app)">
-        
-        <div id="videoContainer">
-            <div style="width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 12px; margin-bottom: 15px; display: flex; align-items: center; justify-content: center; color: #444;">
-                影像尚未啟動
-            </div>
-        </div>
-
-        <div id="status">請輸入網址並點擊啟動</div>
-        <button class="btn btn-start" onclick="loadStream()">1. 啟動遠端影像</button>
+        <h3>🎥 Luckfox 4G 遠端影像</h3>
+        <input type="text" id="ngrokUrl" placeholder="貼上 ngrok 網址 (https://...)">
+        <video id="v" autoplay playsinline muted controls></video>
+        <div id="status">準備就緒 (原生 MSE 模式)</div>
+        <button class="btn" onclick="startStream()">啟動遠端影像</button>
     </div>
 
-    <script type="module">
-        import * as stream from 'https://unpkg.com/video-stream@1.2.0/video-stream.js';
-    </script>
-
     <script>
-        function loadStream() {
+        /**
+         * 這是核心 MSE 邏輯，不依賴任何外部 .js 檔案
+         */
+        function startStream() {
             let url = document.getElementById('ngrokUrl').value.trim();
-            if (!url) return alert("請先輸入 ngrok 網址！");
-            if (url.endsWith('/')) url = url.slice(0, -1);
-
-            const container = document.getElementById('videoContainer');
+            if (!url) return alert("請輸入 ngrok 網址");
+            
+            // 處理 ngrok 的 https 網址，轉為 wss
+            let wsUrl = url.replace("http", "ws") + "/api/ws?src=pet2";
+            const video = document.getElementById('v');
             const status = document.getElementById('status');
             
             status.innerText = "正在建立 WebSocket 連線...";
-            
-            // 使用 go2rtc 專屬的 video-stream 標籤
-            // mode=mse 強制走 TCP 隧道，避開 WebRTC 的 UDP 穿透問題
-            container.innerHTML = `<video-stream src="${url}/api/ws?src=pet2&mode=mse" autoplay muted controls playsinline></video-stream>`;
-            
-            status.innerText = "連線已發起，請等待 3-5 秒影像解碼";
-            status.style.color = "#28a745";
+
+            // 使用瀏覽器內建的 MediaSource
+            const ms = new MediaSource();
+            video.src = URL.createObjectURL(ms);
+
+            ms.addEventListener('sourceopen', () => {
+                const ws = new WebSocket(wsUrl);
+                ws.binaryType = 'arraybuffer';
+
+                let sourceBuffer;
+
+                ws.onmessage = ev => {
+                    if (typeof ev.data === 'string') {
+                        // 第一個訊息通常是編碼格式資訊
+                        const data = JSON.parse(ev.data);
+                        if (data.value && !sourceBuffer) {
+                            // 根據 go2rtc 回傳的 mime 類型建立 buffer
+                            sourceBuffer = ms.addSourceBuffer(data.value);
+                            sourceBuffer.mode = 'segments';
+                        }
+                    } else {
+                        // 接收二進制影像數據並放入播放器
+                        if (sourceBuffer && !sourceBuffer.updating) {
+                            sourceBuffer.appendBuffer(ev.data);
+                        }
+                    }
+                };
+
+                ws.onopen = () => {
+                    status.innerText = "連線成功！正在接收影像...";
+                    status.style.color = "#28a745";
+                };
+
+                ws.onerror = () => {
+                    status.innerText = "連線失敗，請確認 ngrok [Visit Site] 點過了沒";
+                    status.style.color = "#f44336";
+                };
+
+                ws.onclose = () => {
+                    status.innerText = "連線已結束";
+                };
+            });
         }
     </script>
 </body>
