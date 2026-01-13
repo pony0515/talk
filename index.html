@@ -3,34 +3,41 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Luckfox Pro 即時高清對講</title>
+    <title>Luckfox Pro 雙向對講監控</title>
     <style>
         body { font-family: sans-serif; background: #121212; color: #fff; text-align: center; padding: 20px; }
-        .card { max-width: 500px; margin: auto; background: #1e1e1e; border-radius: 20px; padding: 25px; border: 1px solid #333; }
+        .card { max-width: 500px; margin: auto; background: #1e1e1e; border-radius: 20px; padding: 25px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
         #videoBox { width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 12px; overflow: hidden; margin-bottom: 20px; }
         iframe { width: 100%; height: 100%; border: none; }
-        .btn { width: 100%; padding: 18px; font-size: 18px; font-weight: bold; border-radius: 15px; border: none; cursor: pointer; margin-bottom: 12px; }
-        .btn-start { background: #2e7d32; color: white; }
-        .btn-mic { background: #1565c0; color: white; }
+        .btn { width: 100%; padding: 18px; font-size: 18px; font-weight: bold; border-radius: 15px; border: none; cursor: pointer; margin-bottom: 12px; transition: 0.3s; }
+        .btn-start { background: #2e7d32; color: white; width: 100%; }
+        .btn-mic { background: #1565c0; color: white; width: 100%; }
+        .btn-mic:disabled { background: #444; opacity: 0.5; }
         .recording { background: #c62828 !important; animation: pulse 1s infinite; }
         @keyframes pulse { 50% { opacity: 0.6; } }
+        .hint { font-size: 12px; color: #aaa; margin-top: 10px; }
     </style>
 </head>
 <body>
     <div class="card">
-        <h2>🎥 即時影音對講</h2>
+        <h2>🎥 雙向影音監控中心</h2>
         <div id="videoBox">影像待機中...</div>
-        <button class="btn btn-start" onclick="connect()">1. 開啟影像</button>
-        <button class="btn btn-mic" id="micBtn" onclick="toggleMic()" disabled>2. 按住對講</button>
+        <button class="btn btn-start" onclick="connect()">1. 開啟連線 (監聽環境音)</button>
+        <button class="btn btn-mic" id="micBtn" onclick="toggleMic()" disabled>2. 按住對講 (發送聲音)</button>
+        <div class="hint">● 若連線後沒聲音，請點擊影像畫面取消靜音</div>
     </div>
 
     <script>
+        // 請確保這裡的網址與你的 ngrok 網址一致
         const AUDIO_DOMAIN = "https://saturnina-unsatiric-humanly.ngrok-free.dev";
         const VIDEO_DOMAIN = "https://subtarsal-hyperbolic-jenise.ngrok-free.dev";
+        
         let audioCtx, scriptNode, micStream;
 
         function connect() {
-            document.getElementById('videoBox').innerHTML = `<iframe src="${VIDEO_DOMAIN}/stream.html?src=pet2" allow="autoplay; microphone"></iframe>`;
+            // 指定 webrtc 模式以獲得最低延遲的音訊與影像
+            document.getElementById('videoBox').innerHTML = 
+                `<iframe src="${VIDEO_DOMAIN}/stream.html?src=pet2&mode=webrtc" allow="autoplay; microphone"></iframe>`;
             document.getElementById('micBtn').disabled = false;
         }
 
@@ -40,11 +47,12 @@
                 stopMic(); return;
             }
             try {
+                // 手機發送給板子的聲音採樣率鎖定 44100
                 audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 44100 });
                 micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 const source = audioCtx.createMediaStreamSource(micStream);
                 
-                // 設為 4096 (約 0.09 秒發送一次)，實現極低延遲
+                // 緩衝區 4096 (約 0.09s 發送一次)，兼顧順暢與低延遲
                 scriptNode = audioCtx.createScriptProcessor(4096, 1, 1);
                 scriptNode.onaudioprocess = (e) => {
                     const input = e.inputBuffer.getChannelData(0);
@@ -60,11 +68,12 @@
                         headers: { 'ngrok-skip-browser-warning': 'true' }
                     }).catch(()=>{});
                 };
+
                 source.connect(scriptNode);
                 scriptNode.connect(audioCtx.destination);
-                btn.innerText = "通話中 (持久流模式)...";
+                btn.innerText = "正在通話中...";
                 btn.classList.add('recording');
-            } catch (err) { alert("麥克風錯誤: " + err); }
+            } catch (err) { alert("麥克風存取失敗: " + err); }
         }
 
         function stopMic() {
@@ -72,7 +81,7 @@
             if (scriptNode) scriptNode.disconnect();
             if (audioCtx) audioCtx.close();
             if (micStream) micStream.getTracks().forEach(t => t.stop());
-            btn.innerText = "2. 按住對講";
+            btn.innerText = "2. 按住對講 (發送聲音)";
             btn.classList.remove('recording');
         }
     </script>
