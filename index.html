@@ -3,93 +3,80 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Luckfox Pro 遠端監控系統</title>
+    <title>Luckfox Pro 遠端監控</title>
     <style>
         body { font-family: sans-serif; background: #1a1a1a; color: #eee; text-align: center; margin: 0; padding: 20px; }
         .container { max-width: 500px; margin: auto; }
         video { width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
-        .controls { display: flex; flex-direction: column; gap: 10px; margin-top: 20px; }
-        button { padding: 18px; font-size: 16px; font-weight: bold; border-radius: 8px; border: none; cursor: pointer; transition: 0.2s; }
+        #status { font-size: 14px; color: #aaa; margin: 15px 0; padding: 10px; background: #2a2a2a; border-radius: 8px; }
+        .btn { width: 100%; padding: 18px; font-size: 18px; font-weight: bold; border-radius: 10px; border: none; cursor: pointer; margin-top: 10px; }
         .btn-video { background: #28a745; color: white; }
-        .btn-audio { background: #007bff; color: white; }
-        .btn-audio.recording { background: #dc3545; animation: blink 1s infinite; }
-        #status { font-size: 13px; color: #888; margin: 10px 0; padding: 10px; background: #2a2a2a; border-radius: 5px; }
-        @keyframes blink { 50% { opacity: 0.7; } }
+        .btn-audio { background: #007bff; color: white; transition: 0.3s; }
+        .btn-audio:disabled { background: #444; color: #888; cursor: not-allowed; }
+        .recording { background: #dc3545 !important; animation: pulse 1s infinite; }
+        @keyframes pulse { 50% { opacity: 0.8; } }
     </style>
 </head>
 <body>
     <div class="container">
-        <h3> 寵物監視器 (4G/5G 強化版) </h3>
+        <h3>Luckfox 4G 監控系統</h3>
         <video id="v" autoplay playsinline muted controls></video>
-        <div id="status">準備就緒</div>
+        <div id="status">準備就緒 (請點擊啟動)</div>
 
-        <div class="controls">
-            <button class="btn-video" id="connBtn" onclick="startConnect()">1. 啟動影像連線</button>
-            <button class="btn-audio" id="micBtn" onclick="toggleMic()" disabled>2. 按住對講</button>
-        </div>
+        <button class="btn btn-video" id="connBtn" onclick="startConnect()">1. 啟動遠端影像</button>
+        <button class="btn btn-audio" id="micBtn" onclick="toggleMic()" disabled>2. 按住對講</button>
     </div>
 
     <script>
-        // 自動抓取目前的網址 (無論是 ngrok 還是內網 IP)
-        const SVR = "https://ddca383457d7.ngrok-free.app"; 
+        const SVR = "https://ddca383457d7.ngrok-free.app";
         let pc;
         let mediaRecorder;
 
         async function startConnect() {
             const statusDiv = document.getElementById('status');
-            statusDiv.innerText = "連線中 (尋找穿透路徑)...";
+            statusDiv.innerText = "連線中 (強制中繼模式)...";
             
-            // 建立 WebRTC 連線配置
             const config = {
                 iceServers: [
                     { urls: "stun:stun.l.google.com:19302" },
-                    // 使用多組 TURN 伺服器增加 4G 穿透機率
                     { 
-                        urls: "turn:openrelay.metered.ca:80", 
-                        username: "openrelayproject", 
-                        credential: "openrelayproject" 
-                    },
-                    { 
-                        urls: "turn:openrelay.metered.ca:443?transport=tcp", 
-                        username: "openrelayproject", 
-                        credential: "openrelayproject" 
+                        urls: "turn:global.metered.ca:443?transport=tcp", 
+                        username: "4d22e5629ba194c9fe1ddb7c", 
+                        credential: "OYETGRsl0a/CO0wc" 
                     }
-                ]
+                ],
+                iceTransportPolicy: "relay" // 強制走 TURN 伺服器，解決 4G checking 問題
             };
 
             pc = new RTCPeerConnection(config);
 
-            // 監聽連線狀態
             pc.oniceconnectionstatechange = () => {
                 const state = pc.iceConnectionState;
-                statusDiv.innerText = "連線狀態: " + state;
+                statusDiv.innerText = "狀態: " + state;
                 if (state === "connected" || state === "completed") {
                     statusDiv.style.color = "#28a745";
                     document.getElementById('micBtn').disabled = false;
                 }
-                if (state === "failed" || state === "disconnected") {
+                if (state === "failed") {
                     statusDiv.style.color = "#dc3545";
+                    statusDiv.innerText = "連線失敗，請重新整理網頁";
                 }
             };
 
-            // 接收影像軌道
             pc.ontrack = (e) => {
                 document.getElementById('v').srcObject = e.streams[0];
             };
 
-            // 設定只接收影像 (對準 go2rtc 中的 pet2)
             pc.addTransceiver('video', { direction: 'recvonly' });
 
             try {
                 const offer = await pc.createOffer();
                 await pc.setLocalDescription(offer);
 
-                // 發送 Offer 到 go2rtc API
                 const res = await fetch(`${SVR}/api/webrtc?src=pet2`, {
                     method: 'POST',
                     body: offer.sdp
                 });
-                
                 const answer = await res.text();
                 await pc.setRemoteDescription({ type: 'answer', sdp: answer });
             } catch (err) {
@@ -109,23 +96,16 @@
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 mediaRecorder = new MediaRecorder(stream);
-                
                 mediaRecorder.ondataavailable = async (e) => {
                     if (e.data.size > 0) {
-                        // 將音訊數據 POST 到板子的 Python receiver2.py
-                        fetch(`${SVR}/upload_audio`, {
-                            method: 'POST',
-                            body: e.data
-                        }).catch(err => console.error("音訊傳送失敗:", err));
+                        fetch(`${SVR}/upload_audio`, { method: 'POST', body: e.data });
                     }
                 };
-
-                // 每 200 毫秒切成一個碎片傳送，保證低延遲
                 mediaRecorder.start(200); 
                 btn.innerText = "對講中 (點擊停止)";
                 btn.classList.add('recording');
             } catch (err) {
-                alert("無法開啟麥克風。請確認：\n1. 必須使用 HTTPS 網址\n2. 已授權瀏覽器錄音");
+                alert("錄音啟動失敗，請確認已使用 HTTPS 網址。");
             }
         }
     </script>
