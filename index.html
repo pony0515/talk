@@ -3,69 +3,84 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Luckfox Pro 永久監控後台</title>
+    <title>Luckfox Pro 遠端對講 (高清版)</title>
     <style>
-        body { font-family: -apple-system, sans-serif; background: #121212; color: #fff; text-align: center; margin: 0; padding: 20px; }
+        body { font-family: sans-serif; background: #121212; color: #fff; text-align: center; padding: 20px; }
         .card { max-width: 500px; margin: auto; background: #1e1e1e; border-radius: 20px; padding: 25px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
         #videoBox { width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 12px; overflow: hidden; margin-bottom: 20px; border: 1px solid #333; }
         iframe { width: 100%; height: 100%; border: none; }
         .btn { width: 100%; padding: 18px; font-size: 18px; font-weight: bold; border-radius: 15px; border: none; cursor: pointer; transition: 0.3s; margin-bottom: 10px; }
         .btn-start { background: #2e7d32; color: white; }
         .btn-mic { background: #1565c0; color: white; }
-        .recording { background: #c62828 !important; animation: blinker 1s infinite; }
-        @keyframes blinker { 50% { opacity: 0.6; } }
-        #status { font-size: 14px; color: #ffca28; margin-top: 10px; }
+        .recording { background: #c62828 !important; animation: pulse 1s infinite; }
+        @keyframes pulse { 50% { opacity: 0.6; } }
     </style>
 </head>
 <body>
     <div class="card">
-        <h2 style="color:#4caf50;">🏠 遠端影音連線</h2>
+        <h3>🚀 影音雙向對講 (高清)</h3>
         <div id="videoBox">影像待機中...</div>
-        
         <button class="btn btn-start" onclick="connect()">1. 開啟影像</button>
         <button class="btn btn-mic" id="micBtn" onclick="toggleMic()" disabled>2. 按住對講</button>
-        
-        <div id="status">● 永久網域模式</div>
+        <p id="status" style="color:#ffca28; font-size:14px;">● 永久網域模式</p>
     </div>
 
     <script>
-        // 自動填入你的永久網域
         const VIDEO_DOMAIN = "https://subtarsal-hyperbolic-jenise.ngrok-free.dev";
         const AUDIO_DOMAIN = "https://saturnina-unsatiric-humanly.ngrok-free.dev";
 
-        let recorder;
+        let audioCtx, scriptNode, micStream;
 
         function connect() {
-            const videoBox = document.getElementById('videoBox');
-            // 嵌入影像
-            videoBox.innerHTML = `<iframe src="${VIDEO_DOMAIN}/stream.html?src=pet2" allow="autoplay; microphone"></iframe>`;
+            document.getElementById('videoBox').innerHTML = `<iframe src="${VIDEO_DOMAIN}/stream.html?src=pet2" allow="autoplay; microphone"></iframe>`;
             document.getElementById('micBtn').disabled = false;
-            document.getElementById('status').innerText = "影像連線中，請確保已點擊 Visit Site";
         }
 
         async function toggleMic() {
             const btn = document.getElementById('micBtn');
-            if (recorder && recorder.state === "recording") {
-                recorder.stop();
-                btn.innerText = "2. 按住對講";
-                btn.classList.remove('recording');
+            if (audioCtx && audioCtx.state === 'running') {
+                stopMic();
                 return;
             }
-
             try {
-                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                recorder = new MediaRecorder(stream);
-                recorder.ondataavailable = e => {
-                    if (e.data.size > 0) {
-                        fetch(`${AUDIO_DOMAIN}/upload_audio`, { method: 'POST', body: e.data });
+                // 1. 取得麥克風
+                micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+                const source = audioCtx.createMediaStreamSource(micStream);
+                
+                // 2. 建立處理器 (每 4096 採樣處理一次，約 250ms)
+                scriptNode = audioCtx.createScriptProcessor(4096, 1, 1);
+
+                scriptNode.onaudioprocess = (e) => {
+                    const inputData = e.inputBuffer.getChannelData(0);
+                    // 3. 將 Float32 轉為 Int16 (PCM)
+                    const pcmData = new Int16Array(inputData.length);
+                    for (let i = 0; i < inputData.length; i++) {
+                        pcmData[i] = Math.max(-1, Math.min(1, inputData[i])) * 0x7FFF;
                     }
+                    // 4. 發送原始數據
+                    fetch(`${AUDIO_DOMAIN}/upload_audio`, {
+                        method: 'POST',
+                        body: pcmData.buffer,
+                        headers: { 'ngrok-skip-browser-warning': 'true' }
+                    });
                 };
-                recorder.start(200);
+
+                source.connect(scriptNode);
+                scriptNode.connect(audioCtx.destination);
+                
                 btn.innerText = "正在通話...";
                 btn.classList.add('recording');
-            } catch (err) {
-                alert("麥克風錯誤，請檢查 HTTPS 或權限");
-            }
+            } catch (err) { alert("麥克風開啟失敗: " + err); }
+        }
+
+        function stopMic() {
+            const btn = document.getElementById('micBtn');
+            if (scriptNode) scriptNode.disconnect();
+            if (audioCtx) audioCtx.close();
+            if (micStream) micStream.getTracks().forEach(t => t.stop());
+            btn.innerText = "2. 按住對講";
+            btn.classList.remove('recording');
         }
     </script>
 </body>
