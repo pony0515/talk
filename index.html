@@ -2,53 +2,90 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <title>Luckfox MSE 影音整合版</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Luckfox 影音監控終端</title>
     <style>
-        body { background: #000; color: #0f0; text-align: center; font-family: monospace; padding: 20px; }
-        .video-container { width: 100%; max-width: 600px; margin: auto; border: 2px solid #333; }
-        video { width: 100%; display: block; background: #111; }
-        .controls { margin-top: 20px; }
-        button { padding: 15px 30px; font-size: 18px; cursor: pointer; background: #27ae60; color: white; border: none; border-radius: 5px; }
-        #status { margin-top: 15px; color: #888; }
+        body { 
+            background: #0a0a0a; color: #00ff41; 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            text-align: center; margin: 0; padding: 20px;
+        }
+        .main-card {
+            background: #1a1a1a; border: 1px solid #333;
+            max-width: 600px; margin: 0 auto; padding: 20px;
+            border-radius: 15px; box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        }
+        .video-box {
+            width: 100%; aspect-ratio: 16/9; background: #000;
+            border-radius: 8px; overflow: hidden; margin-bottom: 20px;
+            border: 1px solid #444;
+        }
+        video { width: 100%; height: 100%; object-fit: contain; }
+        #status { font-size: 14px; color: #aaa; margin-bottom: 20px; min-height: 1.2em; }
+        button {
+            background: #00ff41; color: #000; border: none;
+            padding: 15px 40px; font-size: 18px; font-weight: bold;
+            border-radius: 30px; cursor: pointer; transition: 0.3s;
+        }
+        button:hover { background: #008f11; color: #fff; }
+        button:disabled { background: #333; color: #666; cursor: not-allowed; }
     </style>
 </head>
 <body>
-    <h2>LUCKFOX REMOTE MONITOR</h2>
-    <div class="video-container">
-        <video id="videoPlayer" autoplay playsinline muted></video>
-    </div>
-    <div class="controls">
+
+    <div class="main-card">
+        <h2>LIVE MONITOR</h2>
+        <div class="video-box">
+            <video id="videoPlayer" autoplay playsinline muted></video>
+        </div>
+        <div id="status">準備就緒</div>
         <button id="btnStart">啟動影音監控</button>
     </div>
-    <div id="status">等待中...</div>
 
-    <script src="https://unpkg.com/hls.js/dist/hls.min.js"></script> <script>
+<script>
+    // ==========================================
+    // 請在這裡填入你最新的 ngrok 網址
+    // ==========================================
     const SVR = "https://87c22b69e24f.ngrok-free.app"; 
+
     const video = document.getElementById('videoPlayer');
+    const btn = document.getElementById('btnStart');
     const status = document.getElementById('status');
 
-    document.getElementById('btnStart').onclick = async () => {
-        status.innerText = "正在連接影像串流...";
+    btn.onclick = () => {
+        btn.disabled = true;
+        status.innerText = "正在連線影像...";
 
-        // 1. 影像：使用 MSE 模式 (透過 Python 轉發)
-        // go2rtc 的 MSE 路徑通常是 /api/mse.mp4?src=流名稱
-        video.src = `${SVR}/api/mse.mp4?src=pet2`;
+        // 1. 影像：使用 MSE (Media Source Extensions) 模式
+        // 加上隨機參數 t= 防止瀏覽器快取舊的流
+        const streamUrl = `${SVR}/api/mse.mp4?src=pet2&t=${Date.now()}`;
         
-        video.onplaying = () => {
-            status.innerText = "影像已連接，正在啟動對講...";
+        video.src = streamUrl;
+        video.load();
+
+        // 當影像可以播放時
+        video.oncanplay = () => {
+            video.play();
+            status.innerText = "影像已連接，正在啟動麥克風...";
             startAudioPush();
         };
 
+        // 影像連線錯誤處理
         video.onerror = () => {
-            status.innerText = "影像讀取失敗，請檢查 go2rtc 狀態";
+            console.error("Video Error:", video.error);
+            status.innerText = "影像讀取失敗 (代碼: " + (video.error ? video.error.code : '未知') + ")";
+            btn.disabled = false;
         };
     };
 
+    // 2. 音訊對講：PCM 暴力推流
     async function startAudioPush() {
         try {
             const audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             const source = audioCtx.createMediaStreamSource(stream);
+            
+            // 建立 4096 bytes 的處理緩衝區
             const processor = audioCtx.createScriptProcessor(4096, 1, 1);
 
             source.connect(processor);
@@ -57,22 +94,30 @@
             processor.onaudioprocess = (e) => {
                 const input = e.inputBuffer.getChannelData(0);
                 const pcm = new Int16Array(input.length);
+                
+                // Float32 轉為 16-bit PCM
                 for (let i = 0; i < input.length; i++) {
                     let s = Math.max(-1, Math.min(1, input[i]));
                     pcm[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
                 }
 
+                // 將音訊數據 POST 到伺服器
                 fetch(SVR, {
                     method: 'POST',
                     mode: 'cors',
                     body: pcm.buffer,
                     headers: { 'Content-Type': 'application/octet-stream' }
-                }).catch(err => console.error("音訊傳送失敗"));
+                }).catch(err => {
+                    console.error("音訊傳送失敗:", err);
+                });
             };
-            status.innerText = "🔴 影音連線中";
-            status.style.color = "#ff4757";
+
+            status.innerText = "🔴 影音監控中";
+            status.style.color = "#00ff41";
+
         } catch (err) {
             status.innerText = "麥克風啟動失敗: " + err.message;
+            btn.disabled = false;
         }
     }
 </script>
