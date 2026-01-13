@@ -3,81 +3,106 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Luckfox 4G 穩定版</title>
+    <title>Luckfox Pro 遠端監控中心</title>
     <style>
-        body { font-family: sans-serif; background: #121212; color: #fff; text-align: center; padding: 20px; }
-        .card { max-width: 500px; margin: auto; background: #1e1e1e; border-radius: 15px; padding: 20px; }
-        video { width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 10px; margin-bottom: 15px; }
-        input { width: 90%; padding: 12px; margin-bottom: 15px; border-radius: 8px; border: 1px solid #444; background: #333; color: #fff; }
-        .btn { width: 100%; padding: 15px; font-size: 18px; border-radius: 10px; border: none; cursor: pointer; background: #007bff; color: white; font-weight: bold; }
-        #status { font-size: 14px; color: #ffca28; margin-top: 15px; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #121212; color: #ffffff; text-align: center; margin: 0; padding: 20px; }
+        .container { max-width: 600px; margin: auto; background: #1e1e1e; border-radius: 20px; padding: 25px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+        h2 { margin-bottom: 20px; color: #4caf50; }
+        
+        /* 影像容器 */
+        #videoWrapper { width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 12px; overflow: hidden; margin-bottom: 20px; border: 1px solid #333; }
+        iframe { width: 100%; height: 100%; border: none; }
+
+        input { width: 90%; padding: 12px; margin-bottom: 15px; border-radius: 10px; border: 1px solid #444; background: #2a2a2a; color: #fff; text-align: center; }
+        
+        .btn-group { display: flex; flex-direction: column; gap: 10px; }
+        .btn { padding: 16px; font-size: 18px; font-weight: bold; border-radius: 12px; border: none; cursor: pointer; transition: 0.3s; }
+        .btn-start { background: #2e7d32; color: white; }
+        .btn-mic { background: #1565c0; color: white; }
+        .btn:disabled { background: #444; color: #888; cursor: not-allowed; }
+        .recording { background: #c62828 !important; animation: blinker 1s linear infinite; }
+        
+        @keyframes blinker { 50% { opacity: 0.5; } }
+        #status { font-size: 14px; margin-top: 15px; color: #ffca28; }
     </style>
 </head>
 <body>
-    <div class="card">
-        <h3>🎥 Luckfox 4G 遠端影像</h3>
-        <input type="text" id="ngrokUrl" placeholder="貼上 ngrok 網址 (https://...)">
-        <video id="v" autoplay playsinline muted controls></video>
-        <div id="status">準備就緒 (原生 MSE 模式)</div>
-        <button class="btn" onclick="startStream()">啟動遠端影像</button>
+    <div class="container">
+        <h2>🎥 遠端監控系統</h2>
+        <input type="text" id="ngrokUrl" placeholder="請貼上 ngrok 網址 (https://...)">
+        
+        <div id="videoWrapper">
+            <div style="height: 100%; display: flex; align-items: center; justify-content: center; color: #555;">
+                等待連線...
+            </div>
+        </div>
+
+        <div class="btn-group">
+            <button class="btn btn-start" onclick="connectAll()">1. 啟動遠端影像</button>
+            <button class="btn btn-mic" id="micBtn" onclick="toggleMic()" disabled>2. 按住對講</button>
+        </div>
+
+        <div id="status">準備就緒</div>
     </div>
 
     <script>
-        /**
-         * 這是核心 MSE 邏輯，不依賴任何外部 .js 檔案
-         */
-        function startStream() {
-            let url = document.getElementById('ngrokUrl').value.trim();
-            if (!url) return alert("請輸入 ngrok 網址");
-            
-            // 處理 ngrok 的 https 網址，轉為 wss
-            let wsUrl = url.replace("http", "ws") + "/api/ws?src=pet2";
-            const video = document.getElementById('v');
+        let mediaRecorder;
+        let svrUrl = "";
+
+        // 啟動連線
+        function connectAll() {
+            let input = document.getElementById('ngrokUrl').value.trim();
+            if (!input) return alert("請輸入 ngrok 網址！");
+            if (input.endsWith('/')) input = input.slice(0, -1);
+            svrUrl = input;
+
             const status = document.getElementById('status');
+            const wrapper = document.getElementById('videoWrapper');
+
+            status.innerText = "連線建立中...";
             
-            status.innerText = "正在建立 WebSocket 連線...";
+            // 使用你測試成功的實測路徑嵌入 Iframe
+            // 這種方式在 4G 下穩定度最高，且不會有 CORS 報錯
+            wrapper.innerHTML = `<iframe src="${svrUrl}/stream.html?src=pet2" allow="autoplay; fullscreen"></iframe>`;
+            
+            status.innerText = "影像已連接 (4G 模式)";
+            status.style.color = "#4caf50";
+            document.getElementById('micBtn').disabled = false;
+        }
 
-            // 使用瀏覽器內建的 MediaSource
-            const ms = new MediaSource();
-            video.src = URL.createObjectURL(ms);
+        // 對講功能 (與你之前的 receiver2.py 搭配)
+        async function toggleMic() {
+            const btn = document.getElementById('micBtn');
+            const status = document.getElementById('status');
 
-            ms.addEventListener('sourceopen', () => {
-                const ws = new WebSocket(wsUrl);
-                ws.binaryType = 'arraybuffer';
+            if (mediaRecorder && mediaRecorder.state === "recording") {
+                mediaRecorder.stop();
+                btn.innerText = "2. 按住對講";
+                btn.classList.remove('recording');
+                return;
+            }
 
-                let sourceBuffer;
-
-                ws.onmessage = ev => {
-                    if (typeof ev.data === 'string') {
-                        // 第一個訊息通常是編碼格式資訊
-                        const data = JSON.parse(ev.data);
-                        if (data.value && !sourceBuffer) {
-                            // 根據 go2rtc 回傳的 mime 類型建立 buffer
-                            sourceBuffer = ms.addSourceBuffer(data.value);
-                            sourceBuffer.mode = 'segments';
-                        }
-                    } else {
-                        // 接收二進制影像數據並放入播放器
-                        if (sourceBuffer && !sourceBuffer.updating) {
-                            sourceBuffer.appendBuffer(ev.data);
-                        }
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                mediaRecorder = new MediaRecorder(stream);
+                
+                mediaRecorder.ondataavailable = async (e) => {
+                    if (e.data.size > 0 && svrUrl) {
+                        // 將錄音發送至板子的聲音接收端口 (由 python receiver2.py 處理)
+                        fetch(`${svrUrl}/upload_audio`, {
+                            method: 'POST',
+                            body: e.data
+                        }).catch(err => console.error("聲音發送失敗:", err));
                     }
                 };
 
-                ws.onopen = () => {
-                    status.innerText = "連線成功！正在接收影像...";
-                    status.style.color = "#28a745";
-                };
-
-                ws.onerror = () => {
-                    status.innerText = "連線失敗，請確認 ngrok [Visit Site] 點過了沒";
-                    status.style.color = "#f44336";
-                };
-
-                ws.onclose = () => {
-                    status.innerText = "連線已結束";
-                };
-            });
+                // 每 200ms 發送一次音訊片段，達到即時對講效果
+                mediaRecorder.start(200);
+                btn.innerText = "對講中 (點擊結束)";
+                btn.classList.add('recording');
+            } catch (err) {
+                alert("無法開啟麥克風，請確保網址為 HTTPS 並授權權限。");
+            }
         }
     </script>
 </body>
