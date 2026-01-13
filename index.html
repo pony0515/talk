@@ -1,144 +1,108 @@
 <!DOCTYPE html>
-<html lang="zh-TW">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Luckfox 全雙工影音對講</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Luckfox Pro 對講監控</title>
     <style>
-        body { background: #000; color: #00ff41; text-align: center; font-family: 'Courier New', monospace; padding: 20px; }
-        .container { max-width: 800px; margin: auto; background: #111; padding: 25px; border-radius: 20px; border: 1px solid #333; }
-        .video-wrapper { position: relative; width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 10px; overflow: hidden; }
-        video { width: 100%; height: 100%; object-fit: contain; }
-        .controls { margin-top: 25px; display: flex; justify-content: center; gap: 15px; flex-wrap: wrap; }
-        button { 
-            padding: 15px 30px; font-size: 16px; font-weight: bold; border: none; border-radius: 50px; cursor: pointer;
-            transition: 0.3s; background: #222; color: #fff; box-shadow: 0 4px 15px rgba(0,0,0,0.3);
-        }
-        #btnGo { background: #00ff41; color: #000; }
-        #btnGo:hover { background: #008f11; color: #fff; transform: scale(1.05); }
-        .btn-active { background: #ff4757 !important; color: #fff; }
-        .status-box { margin-top: 20px; font-size: 14px; color: #888; }
-        .mic-indicator { width: 12px; height: 12px; background: #555; display: inline-block; border-radius: 50%; margin-right: 5px; }
-        .active { background: #ff4757; box-shadow: 0 0 10px #ff4757; }
+        body { font-family: sans-serif; text-align: center; background: #222; color: white; }
+        video { width: 100%; max-width: 600px; background: #000; border-radius: 8px; }
+        .controls { margin-top: 20px; display: grid; gap: 10px; justify-content: center; }
+        button { padding: 15px 30px; font-size: 16px; cursor: pointer; border-radius: 5px; border: none; }
+        .btn-start { background: #28a745; color: white; }
+        .btn-audio { background: #007bff; color: white; }
+        #status { color: #aaa; font-size: 14px; margin-top: 10px; }
     </style>
 </head>
 <body>
-
-<div class="container">
-    <h2 style="letter-spacing: 2px;">LUCKFOX AI INTERCOM</h2>
-    
-    <div class="video-wrapper">
-        <video id="v" autoplay playsinline muted></video>
-    </div>
+    <h2>寵物監視器 (H.264 + 對講)</h2>
+    <video id="v" autoplay playsinline muted controls></video>
+    <div id="status">準備就緒</div>
 
     <div class="controls">
-        <button id="btnGo">1. 啟動連線</button>
-        <button id="btnListen">2. 開啟監聽</button>
+        <button class="btn-start" onclick="startConnect()">1. 啟動影像連線</button>
+        <button class="btn-audio" id="micBtn" onclick="toggleMic()" disabled>2. 開啟對講 (板子收音)</button>
     </div>
 
-    <div id="st" class="status-box">
-        <span class="mic-indicator" id="micIndicator"></span> 系統待命
-    </div>
-</div>
+    <script>
+        // ！！！請修改成你目前的 ngrok HTTPS 網址 ！！！
+        const SVR = "https://ddca383457d7.ngrok-free.app"; 
+        
+        let pc;
+        let mediaRecorder;
 
-<script>
-    // ==========================================
-    // 填入你的 ngrok 網址
-    // ==========================================
-    const SVR = "https://ddca383457d7.ngrok-free.app"; 
-    
-    const v = document.getElementById('v');
-    const st = document.getElementById('st');
-    const btnGo = document.getElementById('btnGo');
-    const btnListen = document.getElementById('btnListen');
-    const micInd = document.getElementById('micIndicator');
+        async function startConnect() {
+            const status = document.getElementById('status');
+            status.innerText = "正在建立連線...";
 
-    // 開放監聽按鈕 (解鎖音訊)
-    btnListen.onclick = () => {
-        v.muted = !v.muted;
-        btnListen.innerText = v.muted ? "2. 開啟監聽" : "🔊 監聽中";
-        btnListen.classList.toggle('btn-active', !v.muted);
-    };
-
-    btnGo.onclick = async () => {
-        btnGo.disabled = true;
-        st.innerText = "正在握手 WebRTC (SDP)...";
-
-        try {
-            // --- 1. 建立 WebRTC 連線 ---
-            const pc = new RTCPeerConnection({
-                iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+            pc = new RTCPeerConnection({
+                iceServers: [
+                    { urls: "stun:stun.l.google.com:19302" },
+                    { 
+                        urls: "turn:openrelay.metered.ca:443", 
+                        username: "openrelayproject", 
+                        credential: "openrelayproject" 
+                    }
+                ]
             });
 
-            // 必須同時添加影像與音訊的接收器
-            pc.addTransceiver('video', { direction: 'recvonly' });
-            pc.addTransceiver('audio', { direction: 'recvonly' });
+            pc.oniceconnectionstatechange = () => {
+                status.innerText = "連線狀態: " + pc.iceConnectionState;
+            };
 
             pc.ontrack = (e) => {
-                console.log("發現軌道:", e.track.kind);
-                if (e.streams && e.streams[0]) {
-                    v.srcObject = e.streams[0];
-                    st.innerText = "影音通道已建立，正在傳輸...";
-                }
+                document.getElementById('v').srcObject = e.streams[0];
             };
+
+            // 只接收影像
+            pc.addTransceiver('video', { direction: 'recvonly' });
 
             const offer = await pc.createOffer();
             await pc.setLocalDescription(offer);
 
-            // 傳送 SDP 給 Python 轉發到 go2rtc
             const res = await fetch(`${SVR}/api/webrtc?src=pet2`, {
                 method: 'POST',
-                body: offer.sdp,
-                headers: { 'Content-Type': 'text/plain' }
+                body: offer.sdp
             });
             
-            const answerSdp = await res.text();
-            await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
-
-            // --- 2. 啟動網頁麥克風傳輸 (網頁 -> 板子) ---
-            startAudioPush();
-
-        } catch (err) {
-            st.innerText = "錯誤: " + err.message;
-            btnGo.disabled = false;
-        }
-    };
-
-    async function startAudioPush() {
-        try {
-            const audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            const source = audioCtx.createMediaStreamSource(stream);
-            const processor = audioCtx.createScriptProcessor(4096, 1, 1);
-
-            source.connect(processor);
-            processor.connect(audioCtx.destination);
-
-            micInd.classList.add('active');
-
-            processor.onaudioprocess = (e) => {
-                const input = e.inputBuffer.getChannelData(0);
-                const pcm = new Int16Array(input.length);
-                
-                for (let i = 0; i < input.length; i++) {
-                    let s = Math.max(-1, Math.min(1, input[i]));
-                    pcm[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-                }
-
-                // POST 網頁聲音到 Python receiver2.py
-                fetch(SVR, {
-                    method: 'POST',
-                    mode: 'cors',
-                    body: pcm.buffer,
-                    headers: { 'Content-Type': 'application/octet-stream' }
-                }).catch(() => {});
-            };
+            const answer = await res.text();
+            await pc.setRemoteDescription({ type: 'answer', sdp: answer });
             
-        } catch (err) {
-            st.innerText = "麥克風權限遭拒";
-            micInd.classList.remove('active');
+            document.getElementById('micBtn').disabled = false;
         }
-    }
-</script>
+
+        async function toggleMic() {
+            const btn = document.getElementById('micBtn');
+            if (mediaRecorder && mediaRecorder.state === "recording") {
+                mediaRecorder.stop();
+                btn.innerText = "2. 開啟對講 (板子收音)";
+                btn.style.background = "#007bff";
+                return;
+            }
+
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                // 使用板子 Python 接收的格式：PCM 16000Hz 16bit 單聲道
+                mediaRecorder = new MediaRecorder(stream);
+                
+                mediaRecorder.ondataavailable = async (e) => {
+                    if (e.data.size > 0) {
+                        // 將音訊傳送到 Python receiver2.py (假設它掛在 ngrok 轉發的 8080 埠)
+                        // 注意：如果 ngrok 只轉發 1984，這裡需要確保 Python 端也能被連到
+                        fetch(`${SVR}/upload_audio`, {
+                            method: 'POST',
+                            body: e.data
+                        });
+                    }
+                };
+
+                mediaRecorder.start(200); // 每 200ms 發送一次碎片
+                btn.innerText = "對講中... (點擊停止)";
+                btn.style.background = "#dc3545";
+            } catch (err) {
+                alert("無法開啟麥克風，請確保使用 HTTPS 網址並允許權限");
+            }
+        }
+    </script>
 </body>
 </html>
