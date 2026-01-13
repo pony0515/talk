@@ -3,74 +3,57 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Luckfox 4G 監控 (GitHub 版)</title>
+    <title>Luckfox 4G 遠端監控 (MSE 穩定版)</title>
     <style>
-        body { font-family: sans-serif; background: #121212; color: #fff; text-align: center; padding: 15px; }
-        .container { max-width: 500px; margin: auto; background: #1e1e1e; padding: 20px; border-radius: 15px; }
-        video { width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 10px; margin-bottom: 15px; }
-        input { width: 90%; padding: 12px; margin-bottom: 10px; border-radius: 8px; border: 1px solid #444; background: #333; color: #fff; }
-        .btn { width: 100%; padding: 15px; font-size: 18px; font-weight: bold; border-radius: 10px; border: none; cursor: pointer; margin-bottom: 10px; }
-        .btn-start { background: #28a745; color: white; }
-        #status { font-size: 14px; color: #ffca28; margin: 10px 0; }
+        body { font-family: -apple-system, sans-serif; background: #121212; color: #fff; text-align: center; margin: 0; padding: 20px; }
+        .card { max-width: 500px; margin: auto; background: #1e1e1e; border-radius: 16px; padding: 20px; box-shadow: 0 8px 32px rgba(0,0,0,0.5); }
+        /* 影片容器樣式 */
+        video-stream { width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 12px; display: block; overflow: hidden; }
+        input { width: 90%; padding: 12px; margin: 15px 0; border-radius: 8px; border: 1px solid #444; background: #333; color: #fff; font-size: 14px; }
+        .btn { width: 100%; padding: 16px; font-size: 18px; font-weight: bold; border-radius: 12px; border: none; cursor: pointer; transition: 0.3s; }
+        .btn-start { background: #007bff; color: white; }
+        .btn-start:hover { background: #0056b3; }
+        #status { font-size: 14px; color: #ffca28; margin-top: 15px; }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h2>🎥 Luckfox 4G 監控</h2>
-        <input type="text" id="ngrokUrl" placeholder="貼上 ngrok 網址 (https://...)">
-        <video id="v" autoplay playsinline muted controls></video>
-        <div id="status">準備就緒</div>
-        <button class="btn btn-start" onclick="startConnect()">啟動遠端影像</button>
+    <div class="card">
+        <h2>🎥 Luckfox 遠端監控</h2>
+        <p style="font-size: 12px; color: #aaa;">模式：MSE (WebSocket over TCP)</p>
+        
+        <input type="text" id="ngrokUrl" placeholder="請貼上 ngrok 網址 (https://xxx.ngrok-free.app)">
+        
+        <div id="videoContainer">
+            <div style="width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 12px; margin-bottom: 15px; display: flex; align-items: center; justify-content: center; color: #444;">
+                影像尚未啟動
+            </div>
+        </div>
+
+        <div id="status">請輸入網址並點擊啟動</div>
+        <button class="btn btn-start" onclick="loadStream()">1. 啟動遠端影像</button>
     </div>
 
+    <script type="module">
+        import * as stream from 'https://unpkg.com/video-stream@1.2.0/video-stream.js';
+    </script>
+
     <script>
-        let pc;
+        function loadStream() {
+            let url = document.getElementById('ngrokUrl').value.trim();
+            if (!url) return alert("請先輸入 ngrok 網址！");
+            if (url.endsWith('/')) url = url.slice(0, -1);
 
-        async function startConnect() {
-            let svr = document.getElementById('ngrokUrl').value.trim();
-            if (!svr) return alert("請先輸入 ngrok 網址！");
-            if (svr.endsWith('/')) svr = svr.slice(0, -1);
-
+            const container = document.getElementById('videoContainer');
             const status = document.getElementById('status');
-            status.innerText = "正在連線 (CORS & 4G 優化模式)...";
-
-            // 初始化 WebRTC
-            pc = new RTCPeerConnection({
-                iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
-            });
-
-            pc.oniceconnectionstatechange = () => {
-                status.innerText = "連線狀態: " + pc.iceConnectionState;
-            };
-
-            pc.ontrack = (e) => {
-                document.getElementById('v').srcObject = e.streams[0];
-            };
-
-            // 請求影像軌道
-            pc.addTransceiver('video', { direction: 'recvonly' });
-
-            try {
-                const offer = await pc.createOffer();
-                await pc.setLocalDescription(offer);
-
-                // 使用 POST 發送 offer 到板子上的 go2rtc
-                const res = await fetch(`${svr}/api/webrtc?src=pet2`, {
-                    method: 'POST',
-                    body: offer.sdp,
-                    mode: 'cors' // 強制開啟 CORS 模式
-                });
-
-                if (!res.ok) throw new Error("API 請求失敗，請檢查 ngrok 是否有效");
-
-                const answer = await res.text();
-                await pc.setRemoteDescription({ type: 'answer', sdp: answer });
-                
-                status.innerText = "信號已交換，等待畫面...";
-            } catch (err) {
-                status.innerText = "錯誤: " + err.message;
-                console.error(err);
-            }
+            
+            status.innerText = "正在建立 WebSocket 連線...";
+            
+            // 使用 go2rtc 專屬的 video-stream 標籤
+            // mode=mse 強制走 TCP 隧道，避開 WebRTC 的 UDP 穿透問題
+            container.innerHTML = `<video-stream src="${url}/api/ws?src=pet2&mode=mse" autoplay muted controls playsinline></video-stream>`;
+            
+            status.innerText = "連線已發起，請等待 3-5 秒影像解碼";
+            status.style.color = "#28a745";
         }
     </script>
 </body>
