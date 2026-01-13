@@ -54,7 +54,7 @@
 
             try {
                 // 初始化音訊，採樣率設為板子支援的 16000
-                audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 44100 });
                 micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 const source = audioCtx.createMediaStreamSource(micStream);
                 
