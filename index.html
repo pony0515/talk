@@ -5,20 +5,15 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Luckfox Pro 遠端監控對講</title>
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
-               text-align: center; background: #1a1a1a; color: #eee; margin: 0; padding: 20px; }
+        body { font-family: sans-serif; text-align: center; background: #1a1a1a; color: #eee; margin: 0; padding: 20px; }
         .container { max-width: 500px; margin: auto; }
-        video { width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: 12px; 
-                box-shadow: 0 4px 15px rgba(0,0,0,0.5); margin-bottom: 15px; }
+        video { width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: 12px; margin-bottom: 15px; }
         .controls { display: flex; flex-direction: column; gap: 12px; }
-        button { padding: 16px; font-size: 16px; font-weight: bold; border-radius: 8px; border: none; 
-                 transition: transform 0.1s, background 0.2s; cursor: pointer; }
-        button:active { transform: scale(0.98); }
+        button { padding: 16px; font-size: 16px; font-weight: bold; border-radius: 8px; border: none; cursor: pointer; }
         .btn-video { background: #28a745; color: white; }
         .btn-audio { background: #007bff; color: white; }
-        .btn-audio.recording { background: #dc3545; animation: pulse 1.5s infinite; }
+        .btn-audio.recording { background: #dc3545; }
         #status { font-size: 13px; color: #888; margin: 10px 0; padding: 8px; background: #2a2a2a; border-radius: 5px; }
-        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.7; } 100% { opacity: 1; } }
     </style>
 </head>
 <body>
@@ -28,7 +23,7 @@
         <div id="status">系統就緒 (請確保使用 HTTPS)</div>
 
         <div class="controls">
-            <button class="btn-video" onclick="startConnect()">1. 啟動連線 (WiFi/4G)</button>
+            <button class="btn-video" onclick="startConnect()">1. 啟動影像連線 (WiFi/4G)</button>
             <button class="btn-audio" id="micBtn" onclick="toggleMic()" disabled>2. 按下對講 (手機發聲)</button>
         </div>
     </div>
@@ -39,44 +34,40 @@
         let pc;
         let mediaRecorder;
 
+        // 【核心函數 1】 影像連線
         async function startConnect() {
             const statusDiv = document.getElementById('status');
-            statusDiv.innerText = "正在連線 (正在尋找中繼站)...";
-
-            // WebRTC 配置：針對 4G 穿透優化
-            const config = {
-                iceServers: [
-                    { urls: "stun:stun.l.google.com:19302" },
-                    { 
-                        urls: "turn:relay.metered.ca:443", 
-                        username: "openrelayproject", 
-                        credential: "openrelayproject" 
-                    }
-                ],
-                // 如果 4G 一直卡在 checking，可強制開啟下面這行
-                // iceTransportPolicy: "relay" 
-            };
-
-            pc = new RTCPeerConnection(config);
-
-            pc.oniceconnectionstatechange = () => {
-                const s = pc.iceConnectionState;
-                statusDiv.innerText = "連線狀態: " + s;
-                if (s === "connected") statusDiv.style.color = "#28a745";
-                if (s === "failed") statusDiv.style.color = "#dc3545";
-            };
-
-            pc.ontrack = (e) => {
-                const videoEl = document.getElementById('v');
-                if (videoEl.srcObject !== e.streams[0]) {
-                    videoEl.srcObject = e.streams[0];
-                }
-            };
-
-            // 請求接收影像軌
-            pc.addTransceiver('video', { direction: 'recvonly' });
+            statusDiv.innerText = "正在連線 (正在嘗試穿透 4G 防火牆)...";
 
             try {
+                // WebRTC 配置：加入 TURN 中繼確保 4G 通訊
+                const config = {
+                    iceServers: [
+                        { urls: "stun:stun.l.google.com:19302" },
+                        { 
+                            urls: "turn:relay.metered.ca:443", 
+                            username: "openrelayproject", 
+                            credential: "openrelayproject" 
+                        }
+                    ],
+                    // 強制模式：如果 4G 還是 checking，請將下一行註解拿掉
+                    // iceTransportPolicy: "relay" 
+                };
+
+                pc = new RTCPeerConnection(config);
+
+                pc.oniceconnectionstatechange = () => {
+                    statusDiv.innerText = "連線狀態: " + pc.iceConnectionState;
+                    if (pc.iceConnectionState === "connected") statusDiv.style.color = "#28a745";
+                };
+
+                pc.ontrack = (e) => {
+                    document.getElementById('v').srcObject = e.streams[0];
+                };
+
+                // 請求影像
+                pc.addTransceiver('video', { direction: 'recvonly' });
+
                 const offer = await pc.createOffer();
                 await pc.setLocalDescription(offer);
 
@@ -85,20 +76,19 @@
                     body: offer.sdp
                 });
                 
-                if (!res.ok) throw new Error("伺服器回應錯誤");
-                
                 const answer = await res.text();
                 await pc.setRemoteDescription({ type: 'answer', sdp: answer });
                 
                 document.getElementById('micBtn').disabled = false;
             } catch (err) {
-                statusDiv.innerText = "錯誤: " + err.message;
+                statusDiv.innerText = "連線失敗: " + err.message;
+                console.error(err);
             }
         }
 
+        // 【核心函數 2】 對講功能
         async function toggleMic() {
             const btn = document.getElementById('micBtn');
-            const statusDiv = document.getElementById('status');
 
             if (mediaRecorder && mediaRecorder.state === "recording") {
                 mediaRecorder.stop();
@@ -108,8 +98,26 @@
             }
 
             try {
-                // 要求麥克風權限 (4G/5G 必須在 HTTPS 環境下)
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                mediaRecorder = new MediaRecorder(stream);
                 
-                // 採用板子 Python 能處理的簡單 PCM 流
-                mediaRecorder = new MediaRecorder(
+                mediaRecorder.ondataavailable = async (e) => {
+                    if (e.data.size > 0) {
+                        // 這裡會把音訊打給 Python 端
+                        fetch(`${SVR}/upload_audio`, {
+                            method: 'POST',
+                            body: e.data
+                        }).catch(err => console.error("音訊傳送失敗", err));
+                    }
+                };
+
+                mediaRecorder.start(200); 
+                btn.innerText = "正在對講... (點擊停止)";
+                btn.classList.add('recording');
+            } catch (err) {
+                alert("麥克風啟動失敗！原因：\n1. 網址不是 HTTPS\n2. 沒給麥克風權限");
+            }
+        }
+    </script>
+</body>
+</html>
