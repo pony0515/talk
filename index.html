@@ -1,124 +1,76 @@
 <!DOCTYPE html>
-<html lang="zh-TW">
+<html>
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Luckfox 影音監控終端</title>
+    <title>Luckfox 終極影音版</title>
     <style>
-        body { 
-            background: #0a0a0a; color: #00ff41; 
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
-            text-align: center; margin: 0; padding: 20px;
-        }
-        .main-card {
-            background: #1a1a1a; border: 1px solid #333;
-            max-width: 600px; margin: 0 auto; padding: 20px;
-            border-radius: 15px; box-shadow: 0 10px 30px rgba(0,0,0,0.5);
-        }
-        .video-box {
-            width: 100%; aspect-ratio: 16/9; background: #000;
-            border-radius: 8px; overflow: hidden; margin-bottom: 20px;
-            border: 1px solid #444;
-        }
-        video { width: 100%; height: 100%; object-fit: contain; }
-        #status { font-size: 14px; color: #aaa; margin-bottom: 20px; min-height: 1.2em; }
-        button {
-            background: #00ff41; color: #000; border: none;
-            padding: 15px 40px; font-size: 18px; font-weight: bold;
-            border-radius: 30px; cursor: pointer; transition: 0.3s;
-        }
-        button:hover { background: #008f11; color: #fff; }
-        button:disabled { background: #333; color: #666; cursor: not-allowed; }
+        body { background: #000; color: #0f0; text-align: center; font-family: monospace; }
+        video { width: 100%; max-width: 600px; border: 1px solid #333; margin-top: 20px; background: #111; }
+        button { padding: 15px 30px; background: #27ae60; color: #fff; border: none; border-radius: 5px; cursor: pointer; margin: 10px; }
+        #st { color: #888; font-size: 14px; }
     </style>
 </head>
 <body>
-
-    <div class="main-card">
-        <h2>LIVE MONITOR</h2>
-        <div class="video-box">
-            <video id="videoPlayer" autoplay playsinline muted></video>
-        </div>
-        <div id="status">準備就緒</div>
-        <button id="btnStart">啟動影音監控</button>
-    </div>
+    <h2>LUCKFOX LIVE (H.265/264)</h2>
+    <video id="v" autoplay playsinline muted></video><br>
+    <button id="go">啟動影音連線</button>
+    <div id="st">READY</div>
 
 <script>
-    // ==========================================
-    // 請在這裡填入你最新的 ngrok 網址
-    // ==========================================
-    const SVR = "https://87c22b69e24f.ngrok-free.app"; 
+    const SVR = "https://ddca383457d7.ngrok-free.app"; 
+    const st = document.getElementById('st');
 
-    const video = document.getElementById('videoPlayer');
-    const btn = document.getElementById('btnStart');
-    const status = document.getElementById('status');
-
-    btn.onclick = () => {
-        btn.disabled = true;
-        status.innerText = "正在連線影像...";
-
-        // 1. 影像：使用 MSE (Media Source Extensions) 模式
-        // 加上隨機參數 t= 防止瀏覽器快取舊的流
-        const streamUrl = `${SVR}/api/mse.mp4?src=pet2&t=${Date.now()}`;
+    document.getElementById('go').onclick = async () => {
+        st.innerText = "連線影像中...";
         
-        video.src = streamUrl;
-        video.load();
+        try {
+            // 1. 影像 (WebRTC 模式)
+            const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+            
+            pc.addTransceiver('video', { direction: 'recvonly' });
+            pc.ontrack = (e) => {
+                document.getElementById('v').srcObject = e.streams[0];
+                st.innerText = "影像連通！啟動對講...";
+                startAudio();
+            };
 
-        // 當影像可以播放時
-        video.oncanplay = () => {
-            video.play();
-            status.innerText = "影像已連接，正在啟動麥克風...";
-            startAudioPush();
-        };
+            const off = await pc.createOffer();
+            await pc.setLocalDescription(off);
 
-        // 影像連線錯誤處理
-        video.onerror = () => {
-            console.error("Video Error:", video.error);
-            status.innerText = "影像讀取失敗 (代碼: " + (video.error ? video.error.code : '未知') + ")";
-            btn.disabled = false;
-        };
+            // 透過 Python 轉發 SDP 給 go2rtc
+            const res = await fetch(`${SVR}/api/webrtc?src=pet2`, {
+                method: 'POST',
+                body: off.sdp,
+                headers: { 'Content-Type': 'text/plain' }
+            });
+            const sdpA = await res.text();
+            await pc.setRemoteDescription({ type: 'answer', sdp: sdpA });
+
+        } catch (e) {
+            st.innerText = "連線失敗: " + e.message;
+        }
     };
 
-    // 2. 音訊對講：PCM 暴力推流
-    async function startAudioPush() {
+    async function startAudio() {
         try {
-            const audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+            const audioCtx = new AudioContext({ sampleRate: 16000 });
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             const source = audioCtx.createMediaStreamSource(stream);
-            
-            // 建立 4096 bytes 的處理緩衝區
-            const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+            const proc = audioCtx.createScriptProcessor(4096, 1, 1);
+            source.connect(proc);
+            proc.connect(audioCtx.destination);
 
-            source.connect(processor);
-            processor.connect(audioCtx.destination);
-
-            processor.onaudioprocess = (e) => {
+            proc.onaudioprocess = (e) => {
                 const input = e.inputBuffer.getChannelData(0);
                 const pcm = new Int16Array(input.length);
-                
-                // Float32 轉為 16-bit PCM
                 for (let i = 0; i < input.length; i++) {
                     let s = Math.max(-1, Math.min(1, input[i]));
                     pcm[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
                 }
-
-                // 將音訊數據 POST 到伺服器
-                fetch(SVR, {
-                    method: 'POST',
-                    mode: 'cors',
-                    body: pcm.buffer,
-                    headers: { 'Content-Type': 'application/octet-stream' }
-                }).catch(err => {
-                    console.error("音訊傳送失敗:", err);
-                });
+                // 音訊 POST 
+                fetch(SVR, { method: 'POST', body: pcm.buffer, mode: 'cors' });
             };
-
-            status.innerText = "🔴 影音監控中";
-            status.style.color = "#00ff41";
-
-        } catch (err) {
-            status.innerText = "麥克風啟動失敗: " + err.message;
-            btn.disabled = false;
-        }
+        } catch (e) { st.innerText = "麥克風啟動失敗"; }
     }
 </script>
 </body>
