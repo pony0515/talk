@@ -2,80 +2,90 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <title>Luckfox 全雙工影音對講終端</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Luckfox 全雙工影音對講</title>
     <style>
-        body { background: #000; color: #00ff41; text-align: center; font-family: 'Courier New', monospace; margin: 0; padding: 20px; }
-        .container { max-width: 700px; margin: auto; background: #111; padding: 20px; border-radius: 15px; border: 1px solid #333; }
-        video { width: 100%; border-radius: 10px; background: #000; box-shadow: 0 0 20px rgba(0,255,65,0.2); }
-        .controls { margin-top: 20px; display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; }
+        body { background: #000; color: #00ff41; text-align: center; font-family: 'Courier New', monospace; padding: 20px; }
+        .container { max-width: 800px; margin: auto; background: #111; padding: 25px; border-radius: 20px; border: 1px solid #333; }
+        .video-wrapper { position: relative; width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 10px; overflow: hidden; }
+        video { width: 100%; height: 100%; object-fit: contain; }
+        .controls { margin-top: 25px; display: flex; justify-content: center; gap: 15px; flex-wrap: wrap; }
         button { 
-            padding: 12px 25px; font-size: 16px; font-weight: bold; border: none; border-radius: 5px; cursor: pointer;
-            transition: 0.3s; background: #333; color: #fff;
+            padding: 15px 30px; font-size: 16px; font-weight: bold; border: none; border-radius: 50px; cursor: pointer;
+            transition: 0.3s; background: #222; color: #fff; box-shadow: 0 4px 15px rgba(0,0,0,0.3);
         }
         #btnGo { background: #00ff41; color: #000; }
-        #btnGo:hover { background: #008f11; color: #fff; }
-        .status-box { margin-top: 15px; font-size: 13px; color: #888; }
-        .speaker-btn { background: #f39c12; } /* 控制是否聽板子的聲音 */
+        #btnGo:hover { background: #008f11; color: #fff; transform: scale(1.05); }
+        .btn-active { background: #ff4757 !important; color: #fff; }
+        .status-box { margin-top: 20px; font-size: 14px; color: #888; }
+        .mic-indicator { width: 12px; height: 12px; background: #555; display: inline-block; border-radius: 50%; margin-right: 5px; }
+        .active { background: #ff4757; box-shadow: 0 0 10px #ff4757; }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <h2>LUCKFOX DUPLEX SYSTEM</h2>
+    <h2 style="letter-spacing: 2px;">LUCKFOX AI INTERCOM</h2>
     
-    <video id="v" autoplay playsinline></video>
-
-    <div class="controls">
-        <button id="btnGo">啟動影音對講</button>
-        <button id="btnSpeaker" class="speaker-btn">開啟板子監聽</button>
+    <div class="video-wrapper">
+        <video id="v" autoplay playsinline muted></video>
     </div>
 
-    <div id="st" class="status-box">系統準備就緒</div>
+    <div class="controls">
+        <button id="btnGo">1. 啟動連線</button>
+        <button id="btnListen">2. 開啟監聽</button>
+    </div>
+
+    <div id="st" class="status-box">
+        <span class="mic-indicator" id="micIndicator"></span> 系統待命
+    </div>
 </div>
 
 <script>
     // ==========================================
-    // 請確認你的 ngrok 網址
+    // 填入你的 ngrok 網址
     // ==========================================
     const SVR = "https://ddca383457d7.ngrok-free.app"; 
     
     const v = document.getElementById('v');
     const st = document.getElementById('st');
     const btnGo = document.getElementById('btnGo');
-    const btnSpeaker = document.getElementById('btnSpeaker');
+    const btnListen = document.getElementById('btnListen');
+    const micInd = document.getElementById('micIndicator');
 
-    // 1. 處理板子傳回來的聲音 (監聽)
-    btnSpeaker.onclick = () => {
+    // 開放監聽按鈕 (解鎖音訊)
+    btnListen.onclick = () => {
         v.muted = !v.muted;
-        btnSpeaker.innerText = v.muted ? "開啟板子監聽" : "關閉板子監聽";
-        btnSpeaker.style.background = v.muted ? "#f39c12" : "#e74c3c";
+        btnListen.innerText = v.muted ? "2. 開啟監聽" : "🔊 監聽中";
+        btnListen.classList.toggle('btn-active', !v.muted);
     };
 
     btnGo.onclick = async () => {
         btnGo.disabled = true;
-        st.innerText = "正在連線影音串流...";
+        st.innerText = "正在握手 WebRTC (SDP)...";
 
         try {
-            // --- A. WebRTC 影像與板子收音 (板子 -> 網頁) ---
+            // --- 1. 建立 WebRTC 連線 ---
             const pc = new RTCPeerConnection({
                 iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
             });
 
-            // 要求接收影像和音訊
+            // 必須同時添加影像與音訊的接收器
             pc.addTransceiver('video', { direction: 'recvonly' });
             pc.addTransceiver('audio', { direction: 'recvonly' });
 
             pc.ontrack = (e) => {
+                console.log("發現軌道:", e.track.kind);
                 if (e.streams && e.streams[0]) {
                     v.srcObject = e.streams[0];
-                    st.innerText = "影音傳輸中 (板子 -> 網頁 OK)";
+                    st.innerText = "影音通道已建立，正在傳輸...";
                 }
             };
 
             const offer = await pc.createOffer();
             await pc.setLocalDescription(offer);
 
-            // 向 Python 請求 SDP 握手
+            // 傳送 SDP 給 Python 轉發到 go2rtc
             const res = await fetch(`${SVR}/api/webrtc?src=pet2`, {
                 method: 'POST',
                 body: offer.sdp,
@@ -85,16 +95,16 @@
             const answerSdp = await res.text();
             await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
 
-            // --- B. 啟動網頁麥克風送出 (網頁 -> 板子) ---
-            startPushingAudio();
+            // --- 2. 啟動網頁麥克風傳輸 (網頁 -> 板子) ---
+            startAudioPush();
 
         } catch (err) {
-            st.innerText = "連線失敗: " + err.message;
+            st.innerText = "錯誤: " + err.message;
             btnGo.disabled = false;
         }
     };
 
-    async function startPushingAudio() {
+    async function startAudioPush() {
         try {
             const audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -103,6 +113,8 @@
 
             source.connect(processor);
             processor.connect(audioCtx.destination);
+
+            micInd.classList.add('active');
 
             processor.onaudioprocess = (e) => {
                 const input = e.inputBuffer.getChannelData(0);
@@ -113,7 +125,7 @@
                     pcm[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
                 }
 
-                // POST 聲音數據回板子 aplay
+                // POST 網頁聲音到 Python receiver2.py
                 fetch(SVR, {
                     method: 'POST',
                     mode: 'cors',
@@ -122,9 +134,9 @@
                 }).catch(() => {});
             };
             
-            st.innerText = "全雙工對講已啟動";
         } catch (err) {
-            st.innerText = "網頁麥克風啟動失敗";
+            st.innerText = "麥克風權限遭拒";
+            micInd.classList.remove('active');
         }
     }
 </script>
