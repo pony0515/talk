@@ -3,29 +3,27 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Luckfox Pro 44.1k 高清對講</title>
+    <title>Luckfox Pro 44.1k 穩定流對講</title>
     <style>
         body { font-family: sans-serif; background: #121212; color: #fff; text-align: center; padding: 20px; margin: 0; }
         .card { max-width: 500px; margin: auto; background: #1e1e1e; border-radius: 20px; padding: 25px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
-        h2 { color: #4caf50; }
         #videoBox { width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 12px; overflow: hidden; margin-bottom: 20px; border: 1px solid #333; }
         iframe { width: 100%; height: 100%; border: none; }
         .btn { width: 100%; padding: 18px; font-size: 18px; font-weight: bold; border-radius: 15px; border: none; cursor: pointer; transition: 0.3s; margin-bottom: 12px; }
         .btn-start { background: #2e7d32; color: white; }
         .btn-mic { background: #1565c0; color: white; }
-        .btn-mic:disabled { background: #444; opacity: 0.5; }
         .recording { background: #c62828 !important; animation: pulse 1s infinite; }
         @keyframes pulse { 50% { opacity: 0.6; } }
-        #status { font-size: 14px; color: #ffca28; margin-top: 10px; }
+        #status { font-size: 14px; color: #ffca28; }
     </style>
 </head>
 <body>
     <div class="card">
-        <h2>🎥 高清影音監控</h2>
+        <h2>🎥 高清流暢對講 (44.1k)</h2>
         <div id="videoBox">影像待機中...</div>
         <button class="btn btn-start" onclick="connect()">1. 開啟影像</button>
         <button class="btn btn-mic" id="micBtn" onclick="toggleMic()" disabled>2. 按住對講</button>
-        <div id="status">● 44.1kHz 採樣模式</div>
+        <div id="status">● 緩衝穩定模式</div>
     </div>
 
     <script>
@@ -33,6 +31,7 @@
         const AUDIO_DOMAIN = "https://saturnina-unsatiric-humanly.ngrok-free.dev";
 
         let audioCtx, scriptNode, micStream;
+        let chunkQueue = []; // 用於累積音訊片段
 
         function connect() {
             document.getElementById('videoBox').innerHTML = `<iframe src="${VIDEO_DOMAIN}/stream.html?src=pet2" allow="autoplay; microphone"></iframe>`;
@@ -47,13 +46,11 @@
             }
 
             try {
-                // 強制設定為 44100
-                audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 44100 });
                 micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 const source = audioCtx.createMediaStreamSource(micStream);
                 
-                // 緩衝區設為 16384。在 44100Hz 下，這大約每 0.37 秒會觸發一次傳送
-                // 這樣既能保持連貫，又不會讓伺服器因為請求太頻繁而卡死
+                // 緩衝區 16384 (44.1kHz 下約 0.37 秒)
                 scriptNode = audioCtx.createScriptProcessor(16384, 1, 1);
 
                 scriptNode.onaudioprocess = (e) => {
@@ -61,25 +58,39 @@
                     const output = new Int16Array(input.length * 2);
                     for (let i = 0; i < input.length; i++) {
                         const s = Math.max(-1, Math.min(1, input[i])) * 0x7FFF;
-                        output[i * 2] = s;     // 左
-                        output[i * 2 + 1] = s; // 右
+                        output[i * 2] = s;
+                        output[i * 2 + 1] = s;
                     }
 
-                    fetch(`${AUDIO_DOMAIN}/upload_audio`, {
-                        method: 'POST',
-                        body: output.buffer,
-                        headers: { 'ngrok-skip-browser-warning': 'true' }
-                    }).catch(err => console.error(err));
+                    // 累積數據，不要立刻發送
+                    chunkQueue.push(output);
+
+                    // 累積到 4 組 (約 1.48 秒) 才發送一次
+                    if (chunkQueue.length >= 4) {
+                        const totalLength = chunkQueue.reduce((acc, curr) => acc + curr.length, 0);
+                        const mergedData = new Int16Array(totalLength);
+                        let offset = 0;
+                        chunkQueue.forEach(item => {
+                            mergedData.set(item, offset);
+                            offset += item.length;
+                        });
+
+                        fetch(`${AUDIO_DOMAIN}/upload_audio`, {
+                            method: 'POST',
+                            body: mergedData.buffer,
+                            headers: { 'ngrok-skip-browser-warning': 'true' }
+                        }).catch(err => console.error("發送失敗:", err));
+
+                        chunkQueue = []; // 清空隊列
+                    }
                 };
 
                 source.connect(scriptNode);
                 scriptNode.connect(audioCtx.destination);
                 
-                btn.innerText = "正在通話中...";
+                btn.innerText = "通話中 (穩定連貫)...";
                 btn.classList.add('recording');
-            } catch (err) {
-                alert("麥克風錯誤: " + err);
-            }
+            } catch (err) { alert("麥克風錯誤: " + err); }
         }
 
         function stopMic() {
@@ -87,6 +98,7 @@
             if (scriptNode) scriptNode.disconnect();
             if (audioCtx) audioCtx.close();
             if (micStream) micStream.getTracks().forEach(t => t.stop());
+            chunkQueue = [];
             btn.innerText = "2. 按住對講";
             btn.classList.remove('recording');
         }
