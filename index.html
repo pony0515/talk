@@ -43,15 +43,10 @@
                 // WebRTC 配置：加入 TURN 中繼確保 4G 通訊
                 const config = {
                     iceServers: [
-                        { urls: "stun:stun.l.google.com:19302" },
-                        { 
-                            urls: "turn:relay.metered.ca:443", 
-                            username: "openrelayproject", 
-                            credential: "openrelayproject" 
-                        }
+                        { urls: "stun:stun.l.google.com:19302" } // 先只留這個最基礎的
                     ],
-                    // 強制模式：如果 4G 還是 checking，請將下一行註解拿掉
-                    // iceTransportPolicy: "relay" 
+                    // 暫時把 relay 拿掉，確保 WiFi 能先通
+                    iceTransportPolicy: "all" 
                 };
 
                 pc = new RTCPeerConnection(config);
