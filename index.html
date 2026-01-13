@@ -3,35 +3,32 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Luckfox Pro 影音對講中心</title>
+    <title>Luckfox Pro 44.1k 高清對講</title>
     <style>
-        body { font-family: -apple-system, sans-serif; background: #121212; color: #fff; text-align: center; padding: 20px; margin: 0; }
-        .card { max-width: 500px; margin: auto; background: #1e1e1e; border-radius: 20px; padding: 25px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); border: 1px solid #333; }
-        h2 { color: #4caf50; margin-bottom: 20px; }
-        #videoBox { width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 12px; overflow: hidden; margin-bottom: 20px; border: 1px solid #444; }
+        body { font-family: sans-serif; background: #121212; color: #fff; text-align: center; padding: 20px; margin: 0; }
+        .card { max-width: 500px; margin: auto; background: #1e1e1e; border-radius: 20px; padding: 25px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+        h2 { color: #4caf50; }
+        #videoBox { width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 12px; overflow: hidden; margin-bottom: 20px; border: 1px solid #333; }
         iframe { width: 100%; height: 100%; border: none; }
-        .btn { width: 100%; padding: 18px; font-size: 18px; font-weight: bold; border-radius: 15px; border: none; cursor: pointer; transition: 0.2s; margin-bottom: 12px; }
+        .btn { width: 100%; padding: 18px; font-size: 18px; font-weight: bold; border-radius: 15px; border: none; cursor: pointer; transition: 0.3s; margin-bottom: 12px; }
         .btn-start { background: #2e7d32; color: white; }
         .btn-mic { background: #1565c0; color: white; }
         .btn-mic:disabled { background: #444; opacity: 0.5; }
-        .recording { background: #c62828 !important; animation: blink 1s infinite; }
-        @keyframes blink { 50% { opacity: 0.6; } }
+        .recording { background: #c62828 !important; animation: pulse 1s infinite; }
+        @keyframes pulse { 50% { opacity: 0.6; } }
         #status { font-size: 14px; color: #ffca28; margin-top: 10px; }
     </style>
 </head>
 <body>
     <div class="card">
-        <h2>🎥 遠端影音連線</h2>
+        <h2>🎥 高清影音監控</h2>
         <div id="videoBox">影像待機中...</div>
-        
-        <button class="btn btn-start" onclick="connect()">1. 開啟影像連線</button>
+        <button class="btn btn-start" onclick="connect()">1. 開啟影像</button>
         <button class="btn btn-mic" id="micBtn" onclick="toggleMic()" disabled>2. 按住對講</button>
-        
-        <div id="status">● 永久網域模式</div>
+        <div id="status">● 44.1kHz 採樣模式</div>
     </div>
 
     <script>
-        // 設定你的永久網域
         const VIDEO_DOMAIN = "https://subtarsal-hyperbolic-jenise.ngrok-free.dev";
         const AUDIO_DOMAIN = "https://saturnina-unsatiric-humanly.ngrok-free.dev";
 
@@ -40,44 +37,39 @@
         function connect() {
             document.getElementById('videoBox').innerHTML = `<iframe src="${VIDEO_DOMAIN}/stream.html?src=pet2" allow="autoplay; microphone"></iframe>`;
             document.getElementById('micBtn').disabled = false;
-            document.getElementById('status').innerText = "影像已載入 (請確保已點擊過 Visit Site)";
         }
 
         async function toggleMic() {
             const btn = document.getElementById('micBtn');
-            const status = document.getElementById('status');
-
             if (audioCtx && audioCtx.state === 'running') {
                 stopMic();
                 return;
             }
 
             try {
-                // 初始化音訊，採樣率設為板子支援的 16000
+                // 強制設定為 44100
                 audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 44100 });
                 micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 const source = audioCtx.createMediaStreamSource(micStream);
                 
-                // 處理器緩衝區設為 4096 (約 250ms)
-                scriptNode = audioCtx.createScriptProcessor(4096, 1, 1);
+                // 緩衝區設為 16384。在 44100Hz 下，這大約每 0.37 秒會觸發一次傳送
+                // 這樣既能保持連貫，又不會讓伺服器因為請求太頻繁而卡死
+                scriptNode = audioCtx.createScriptProcessor(16384, 1, 1);
 
                 scriptNode.onaudioprocess = (e) => {
-                    const inputData = e.inputBuffer.getChannelData(0);
-                    
-                    // 將單聲道複製為雙聲道 PCM (Int16)
-                    const pcmData = new Int16Array(inputData.length * 2);
-                    for (let i = 0; i < inputData.length; i++) {
-                        const s = Math.max(-1, Math.min(1, inputData[i])) * 0x7FFF;
-                        pcmData[i * 2] = s;     // 左
-                        pcmData[i * 2 + 1] = s; // 右
+                    const input = e.inputBuffer.getChannelData(0);
+                    const output = new Int16Array(input.length * 2);
+                    for (let i = 0; i < input.length; i++) {
+                        const s = Math.max(-1, Math.min(1, input[i])) * 0x7FFF;
+                        output[i * 2] = s;     // 左
+                        output[i * 2 + 1] = s; // 右
                     }
 
-                    // 發送純淨 PCM 數據，帶上 ngrok 標頭
                     fetch(`${AUDIO_DOMAIN}/upload_audio`, {
                         method: 'POST',
-                        body: pcmData.buffer,
+                        body: output.buffer,
                         headers: { 'ngrok-skip-browser-warning': 'true' }
-                    });
+                    }).catch(err => console.error(err));
                 };
 
                 source.connect(scriptNode);
@@ -85,7 +77,6 @@
                 
                 btn.innerText = "正在通話中...";
                 btn.classList.add('recording');
-                status.innerText = "聲音數據傳送中...";
             } catch (err) {
                 alert("麥克風錯誤: " + err);
             }
@@ -98,7 +89,6 @@
             if (micStream) micStream.getTracks().forEach(t => t.stop());
             btn.innerText = "2. 按住對講";
             btn.classList.remove('recording');
-            document.getElementById('status').innerText = "通話已停止";
         }
     </script>
 </body>
