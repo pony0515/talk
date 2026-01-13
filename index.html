@@ -45,7 +45,8 @@
                         credential: "OYETGRsl0a/CO0wc" 
                     }
                 ],
-                iceTransportPolicy: "relay" // 強制走 TURN 伺服器，解決 4G checking 問題
+                iceCandidatePoolSize: 10
+                //iceTransportPolicy: "relay" // 強制走 TURN 伺服器，解決 4G checking 問題
             };
 
             pc = new RTCPeerConnection(config);
